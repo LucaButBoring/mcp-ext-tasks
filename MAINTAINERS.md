@@ -8,7 +8,7 @@ This extension is maintained by the **Agents Working Group**.
 
 - [Peter Alexander](https://github.com/pja-ant)
 - [Luca Chang](https://github.com/LucaButBoring)
-- [Inna Harper](https://github.com/ihrpr)
+- [Caitie McCaffrey](https://github.com/CaitieM20)
 
 ## Sponsor
 

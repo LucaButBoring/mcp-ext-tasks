@@ -1,11 +1,11 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "description": "MCP Tasks Extension Schema. Contains only task-related definitions from the MCP 2025-11-25 specification. Base types (Result, JSONRPCRequest, JSONRPCNotification, etc.) are defined in the core MCP schema.",
-  "$comment": "Extension Identifier: io.modelcontextprotocol/tasks. Core MCP types (Result, JSONRPCRequest, etc.) are structurally inlined in this schema for portability. The authoritative definitions are in the core schema at https://github.com/modelcontextprotocol/modelcontextprotocol/tree/main/schema/2025-11-25",
+  "description": "MCP Tasks Extension Schema. Contains only task-related definitions from the MCP 2025-11-25 specification. Core MCP types are referenced via remote $ref pointing to the 2025-11-25 core schema.",
+  "$comment": "Extension Identifier: io.modelcontextprotocol/tasks. Core schema: https://github.com/modelcontextprotocol/modelcontextprotocol/tree/2025-11-25/schema/2025-11-25",
   "$defs": {
     "TaskStatus": {
       "description": "The status of a task.",
-      "enum": ["working", "input_required", "completed", "failed", "cancelled"],
+      "enum": ["cancelled", "completed", "failed", "input_required", "working"],
       "type": "string"
     },
     "TaskMetadata": {
@@ -32,9 +32,17 @@
     "Task": {
       "description": "Data associated with a task.",
       "properties": {
-        "taskId": {
-          "description": "The task identifier.",
+        "createdAt": {
+          "description": "ISO 8601 timestamp when the task was created.",
           "type": "string"
+        },
+        "lastUpdatedAt": {
+          "description": "ISO 8601 timestamp when the task was last updated.",
+          "type": "string"
+        },
+        "pollInterval": {
+          "description": "Suggested polling interval in milliseconds.",
+          "type": "integer"
         },
         "status": {
           "$ref": "#/$defs/TaskStatus",
@@ -44,24 +52,16 @@
           "description": "Optional human-readable message describing the current task state.\nThis can provide context for any status, including:\n- Reasons for \"cancelled\" status\n- Summaries for \"completed\" status\n- Diagnostic information for \"failed\" status (e.g., error details, what went wrong)",
           "type": "string"
         },
-        "createdAt": {
-          "description": "ISO 8601 timestamp when the task was created.",
-          "type": "string"
-        },
-        "lastUpdatedAt": {
-          "description": "ISO 8601 timestamp when the task was last updated.",
+        "taskId": {
+          "description": "The task identifier.",
           "type": "string"
         },
         "ttl": {
           "description": "Actual retention duration from creation in milliseconds, null for unlimited.",
           "type": ["integer", "null"]
-        },
-        "pollInterval": {
-          "description": "Suggested polling interval in milliseconds.",
-          "type": "integer"
         }
       },
-      "required": ["taskId", "status", "createdAt", "lastUpdatedAt", "ttl"],
+      "required": ["createdAt", "lastUpdatedAt", "status", "taskId", "ttl"],
       "type": "object"
     },
     "CreateTaskResult": {
@@ -69,7 +69,7 @@
       "properties": {
         "_meta": {
           "additionalProperties": {},
-          "description": "See the core MCP specification for notes on `_meta` usage.",
+          "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
           "type": "object"
         },
         "task": {
@@ -84,18 +84,18 @@
       "properties": {
         "_meta": {
           "additionalProperties": {},
-          "description": "See the core MCP specification for notes on `_meta` usage.",
+          "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
           "properties": {
             "progressToken": {
-              "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.",
-              "type": ["string", "integer"]
+              "$ref": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/schema/2025-11-25/schema.json#/$defs/ProgressToken",
+              "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications."
             }
           },
           "type": "object"
         },
         "task": {
           "$ref": "#/$defs/TaskMetadata",
-          "description": "If specified, the caller is requesting task-augmented execution for this request.\nThe request will return a CreateTaskResult immediately, and the actual result can be retrieved later via tasks/result.\n\nTask augmentation is subject to capability negotiation - receivers MUST declare support for task augmentation of specific request types in their capabilities."
+          "description": "If specified, the caller is requesting task-augmented execution for this request.\nThe request will return a CreateTaskResult immediately, and the actual result can be\nretrieved later via tasks/result.\n\nTask augmentation is subject to capability negotiation - receivers MUST declare support\nfor task augmentation of specific request types in their capabilities."
         }
       },
       "type": "object"
@@ -104,8 +104,7 @@
       "description": "A request to retrieve the state of a task.",
       "properties": {
         "id": {
-          "description": "A unique identifier for the request.",
-          "type": ["string", "integer"]
+          "$ref": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/schema/2025-11-25/schema.json#/$defs/RequestId"
         },
         "jsonrpc": {
           "const": "2.0",
@@ -130,29 +129,21 @@
       "type": "object"
     },
     "GetTaskResult": {
-      "description": "The response to a tasks/get request.",
       "allOf": [
         {
-          "properties": {
-            "_meta": {
-              "additionalProperties": {},
-              "description": "See the core MCP specification for notes on `_meta` usage.",
-              "type": "object"
-            }
-          },
-          "type": "object"
+          "$ref": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/schema/2025-11-25/schema.json#/$defs/Result"
         },
         {
           "$ref": "#/$defs/Task"
         }
-      ]
+      ],
+      "description": "The response to a tasks/get request."
     },
     "GetTaskPayloadRequest": {
       "description": "A request to retrieve the result of a completed task.",
       "properties": {
         "id": {
-          "description": "A unique identifier for the request.",
-          "type": ["string", "integer"]
+          "$ref": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/schema/2025-11-25/schema.json#/$defs/RequestId"
         },
         "jsonrpc": {
           "const": "2.0",
@@ -177,12 +168,12 @@
       "type": "object"
     },
     "GetTaskPayloadResult": {
-      "description": "The response to a tasks/result request.\nThe structure matches the result type of the original request.\nFor example, a tools/call task would return the CallToolResult structure.",
       "additionalProperties": {},
+      "description": "The response to a tasks/result request.\nThe structure matches the result type of the original request.\nFor example, a tools/call task would return the CallToolResult structure.",
       "properties": {
         "_meta": {
           "additionalProperties": {},
-          "description": "See the core MCP specification for notes on `_meta` usage.",
+          "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
           "type": "object"
         }
       },
@@ -192,8 +183,7 @@
       "description": "A request to cancel a task.",
       "properties": {
         "id": {
-          "description": "A unique identifier for the request.",
-          "type": ["string", "integer"]
+          "$ref": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/schema/2025-11-25/schema.json#/$defs/RequestId"
         },
         "jsonrpc": {
           "const": "2.0",
@@ -218,29 +208,21 @@
       "type": "object"
     },
     "CancelTaskResult": {
-      "description": "The response to a tasks/cancel request.",
       "allOf": [
         {
-          "properties": {
-            "_meta": {
-              "additionalProperties": {},
-              "description": "See the core MCP specification for notes on `_meta` usage.",
-              "type": "object"
-            }
-          },
-          "type": "object"
+          "$ref": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/schema/2025-11-25/schema.json#/$defs/Result"
         },
         {
           "$ref": "#/$defs/Task"
         }
-      ]
+      ],
+      "description": "The response to a tasks/cancel request."
     },
     "ListTasksRequest": {
       "description": "A request to retrieve a list of tasks.",
       "properties": {
         "id": {
-          "description": "A unique identifier for the request.",
-          "type": ["string", "integer"]
+          "$ref": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/schema/2025-11-25/schema.json#/$defs/RequestId"
         },
         "jsonrpc": {
           "const": "2.0",
@@ -251,13 +233,7 @@
           "type": "string"
         },
         "params": {
-          "properties": {
-            "cursor": {
-              "description": "An opaque token representing the current pagination position.",
-              "type": "string"
-            }
-          },
-          "type": "object"
+          "$ref": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/schema/2025-11-25/schema.json#/$defs/PaginatedRequestParams"
         }
       },
       "required": ["id", "jsonrpc", "method"],
@@ -268,7 +244,7 @@
       "properties": {
         "_meta": {
           "additionalProperties": {},
-          "description": "See the core MCP specification for notes on `_meta` usage.",
+          "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
           "type": "object"
         },
         "nextCursor": {
@@ -286,22 +262,15 @@
       "type": "object"
     },
     "TaskStatusNotificationParams": {
-      "description": "Parameters for a `notifications/tasks/status` notification.",
       "allOf": [
         {
-          "properties": {
-            "_meta": {
-              "additionalProperties": {},
-              "description": "See the core MCP specification for notes on `_meta` usage.",
-              "type": "object"
-            }
-          },
-          "type": "object"
+          "$ref": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/schema/2025-11-25/schema.json#/$defs/NotificationParams"
         },
         {
           "$ref": "#/$defs/Task"
         }
-      ]
+      ],
+      "description": "Parameters for a `notifications/tasks/status` notification."
     },
     "TaskStatusNotification": {
       "description": "An optional notification from the receiver to the requestor, informing them that a task's status has changed. Receivers are not required to send these notifications.",

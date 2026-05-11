@@ -3,110 +3,23 @@
  * Extension Identifier: io.modelcontextprotocol/tasks
  *
  * This file contains only the task-related types from the MCP 2025-11-25 specification.
- * Base types (Result, JSONRPCRequest, JSONRPCNotification, etc.) are defined in the
- * core MCP schema at https://github.com/modelcontextprotocol/modelcontextprotocol
+ * Base types are imported from the core MCP SDK.
  *
  * @see https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
  */
 
-// ============================================================================
-// Base type stubs (defined in core MCP schema)
-// ============================================================================
-//
-// The following types are minimal stubs of core MCP types, provided solely so
-// that this file compiles. They are NOT part of the Tasks extension API.
-// Implementations MUST use the authoritative definitions from the core schema:
-//   https://github.com/modelcontextprotocol/modelcontextprotocol/tree/main/schema/2025-11-25
-// ============================================================================
-
-/**
- * @internal Core MCP type stub — see core schema for authoritative definition.
- */
-type ProgressToken = string | number;
-
-/**
- * @internal Core MCP type stub — see core schema for authoritative definition.
- */
-type Cursor = string;
-
-/**
- * @internal Core MCP type stub — see core schema for authoritative definition.
- */
-type RequestId = string | number;
-
-/**
- * @internal Core MCP type stub — see core schema for authoritative definition.
- */
-interface RequestParams {
-  _meta?: {
-    progressToken?: ProgressToken;
-    [key: string]: unknown;
-  };
-}
-
-/**
- * @internal Core MCP type stub — see core schema for authoritative definition.
- */
-interface NotificationParams {
-  _meta?: { [key: string]: unknown };
-}
-
-/**
- * @internal Core MCP type stub — see core schema for authoritative definition.
- */
-interface Result {
-  _meta?: { [key: string]: unknown };
-  [key: string]: unknown;
-}
-
-/**
- * @internal Core MCP type stub — see core schema for authoritative definition.
- */
-interface Request {
-  method: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  params?: { [key: string]: any };
-}
-
-/**
- * @internal Core MCP type stub — see core schema for authoritative definition.
- */
-interface Notification {
-  method: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  params?: { [key: string]: any };
-}
-
-/**
- * @internal Core MCP type stub — see core schema for authoritative definition.
- */
-interface JSONRPCRequest extends Request {
-  jsonrpc: "2.0";
-  id: RequestId;
-}
-
-/**
- * @internal Core MCP type stub — see core schema for authoritative definition.
- */
-interface JSONRPCNotification extends Notification {
-  jsonrpc: "2.0";
-}
-
-/**
- * @internal Core MCP type stub — see core schema for authoritative definition.
- */
-interface PaginatedRequest extends JSONRPCRequest {
-  params?: RequestParams & {
-    cursor?: Cursor;
-  };
-}
-
-/**
- * @internal Core MCP type stub — see core schema for authoritative definition.
- */
-interface PaginatedResult extends Result {
-  nextCursor?: Cursor;
-}
+import type {
+  Cursor,
+  JSONRPCNotification,
+  JSONRPCRequest,
+  NotificationParams,
+  PaginatedRequest,
+  PaginatedResult,
+  ProgressToken,
+  RequestId,
+  RequestParams,
+  Result,
+} from "@modelcontextprotocol/sdk/types.js";
 
 /* Tasks */
 
@@ -301,7 +214,8 @@ export interface ListTasksResult extends PaginatedResult {
  *
  * @category `notifications/tasks/status`
  */
-export type TaskStatusNotificationParams = NotificationParams & Task;
+export type TaskStatusNotificationParams = NotificationParams &
+  Task & { [key: string]: unknown };
 
 /**
  * An optional notification from the receiver to the requestor, informing them that a task's status has changed. Receivers are not required to send these notifications.

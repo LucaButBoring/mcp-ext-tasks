@@ -1,0 +1,14 @@
+{
+  "name": "@modelcontextprotocol/experimental-ext-tasks",
+  "private": true,
+  "version": "0.1.0",
+  "description": "MCP Tasks Extension - Experimental extension for task management in the Model Context Protocol",
+  "license": "Apache-2.0",
+  "scripts": {
+    "check:schema": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "typescript": "^5.0.0"
+  }
+}

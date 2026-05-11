@@ -7,3 +7,4 @@ package-lock.json
 .jj/
 *.tsbuildinfo
 dist/
+schema/**/generated/

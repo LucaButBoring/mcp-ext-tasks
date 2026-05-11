@@ -1,9 +1,12 @@
 /**
- * MCP Tasks Extension Schema
+ * MCP Tasks Extension Schema (spec.types.ts)
  * Extension Identifier: io.modelcontextprotocol/tasks
  *
- * This file contains only the task-related types from the MCP 2025-11-25 specification.
- * Base types are imported from the core MCP SDK.
+ * This file contains pure TypeScript interface definitions for the MCP Tasks extension.
+ * These types are the source of truth and are used to generate Zod schemas via `ts-to-zod`.
+ *
+ * - Use `@description` JSDoc tags to generate `.describe()` calls on schemas
+ * - Run `npm run generate:schemas` to regenerate schemas from these types
  *
  * @see https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
  */

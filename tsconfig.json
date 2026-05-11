@@ -7,5 +7,6 @@
     "moduleResolution": "node",
     "skipLibCheck": true
   },
-  "include": ["schema/**/*.ts"]
+  "include": ["schema/**/*.ts"],
+  "exclude": ["schema/**/generated/**"]
 }

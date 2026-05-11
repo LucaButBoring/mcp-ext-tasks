@@ -2,13 +2,20 @@
   "name": "@modelcontextprotocol/experimental-ext-tasks",
   "private": true,
   "version": "0.1.0",
+  "type": "module",
   "description": "MCP Tasks Extension - Experimental extension for task management in the Model Context Protocol",
   "license": "Apache-2.0",
   "scripts": {
-    "check:schema": "tsc --noEmit"
+    "generate:schemas": "tsx scripts/generate-schemas.ts",
+    "check:schema": "npm run check:schema:ts && npm run check:schema:json",
+    "check:schema:ts": "tsc --noEmit",
+    "check:schema:json": "tsx scripts/generate-schemas.ts --check"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "typescript": "^5.0.0"
+    "ts-to-zod": "^5.1.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.0.0",
+    "zod": "^4.4.3"
   }
 }

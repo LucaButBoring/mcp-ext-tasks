@@ -33,7 +33,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PROJECT_ROOT = join(__dirname, "..");
 
-const SCHEMA_DIR = join(PROJECT_ROOT, "schema", "2025-11-25");
+const SCHEMA_DIR = join(PROJECT_ROOT, "schema", "draft");
 const SPEC_TYPES_FILE = join(SCHEMA_DIR, "schema.ts");
 const GENERATED_DIR = join(SCHEMA_DIR, "generated");
 const SCHEMA_OUTPUT_FILE = join(GENERATED_DIR, "schema.ts");

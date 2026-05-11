@@ -5,6 +5,7 @@
 - **Created**: 2025-10-20
 - **Author(s)**: Surbhi Bansal, Luca Chang
 - **Issue**: #1686
++ **Issue**: [#1686](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1686)
 
 ## Abstract
 

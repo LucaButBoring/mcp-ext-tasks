@@ -19,8 +19,22 @@ Tasks are useful for:
 The full specification for Tasks as defined in the `2025-11-25` MCP protocol version can be found at:
 
 - **Specification:** [`docs/specification/2025-11-25/tasks.mdx`](docs/specification/2025-11-25/tasks.mdx)
-- **Schema (TypeScript):** [`schema/draft/2025-11-25/schema.ts`](schema/draft/2025-11-25/schema.ts)
-- **Schema (JSON):** [`schema/draft/2025-11-25/schema.json`](schema/draft/2025-11-25/schema.json)
+- **Schema (TypeScript):** [`schema/2025-11-25/schema.ts`](schema/2025-11-25/schema.ts)
+- **Schema (JSON):** [`schema/2025-11-25/schema.json`](schema/2025-11-25/schema.json)
+
+## Development
+
+### Schema Generation
+
+The JSON Schema is auto-generated from the TypeScript type definitions using [ts-to-zod](https://github.com/fabien0102/ts-to-zod) and Zod's `toJSONSchema()`. Do not hand-edit `schema.json` or `generated/schema.ts`.
+
+```bash
+# Generate Zod schemas and JSON Schema from schema.ts
+npm run generate:schemas
+
+# Verify TypeScript compiles and generated files are up to date
+npm run check:schema
+```
 
 ## SEPs
 

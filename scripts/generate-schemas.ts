@@ -23,7 +23,7 @@
  * @see https://github.com/fabien0102/ts-to-zod
  */
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generate } from "ts-to-zod";
@@ -33,7 +33,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PROJECT_ROOT = join(__dirname, "..");
 
-const SCHEMA_DIR = join(PROJECT_ROOT, "schema", "draft", "2025-11-25");
+const SCHEMA_DIR = join(PROJECT_ROOT, "schema", "2025-11-25");
 const SPEC_TYPES_FILE = join(SCHEMA_DIR, "schema.ts");
 const GENERATED_DIR = join(SCHEMA_DIR, "generated");
 const SCHEMA_OUTPUT_FILE = join(GENERATED_DIR, "schema.ts");
@@ -163,6 +163,9 @@ async function main() {
     console.log("\nAll schemas are up to date!");
     return;
   }
+
+  // Ensure generated directory exists
+  mkdirSync(GENERATED_DIR, { recursive: true });
 
   // Write Zod schemas
   writeFileSync(SCHEMA_OUTPUT_FILE, schemasContent, "utf-8");

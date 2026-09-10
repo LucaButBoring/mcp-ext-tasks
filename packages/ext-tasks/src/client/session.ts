@@ -294,9 +294,19 @@ class PortTaskEnabledSession<
     if (options.metadata !== undefined) requestParams._meta = options.metadata;
     const generation = this.port.taskCapabilities.generation;
     const preference = options.task?.preference ?? "allow";
+    const retentionMs = options.task?.retentionMs;
     if (
-      options.task?.retentionMs !== undefined &&
-      options.task.retention === "require-capability" &&
+      retentionMs !== undefined &&
+      (!Number.isSafeInteger(retentionMs) || retentionMs < 0)
+    ) {
+      callLifecycle.dispose();
+      throw new RangeError(
+        "task.retentionMs must be a non-negative safe integer",
+      );
+    }
+    if (
+      retentionMs !== undefined &&
+      options.task?.retention === "require-capability" &&
       !this.capabilities.requestedRetention
     ) {
       callLifecycle.dispose();
@@ -317,9 +327,7 @@ class PortTaskEnabledSession<
     }
     if (callAsTaskV1)
       requestParams.task =
-        options.task?.retentionMs === undefined
-          ? {}
-          : { ttl: options.task.retentionMs };
+        retentionMs === undefined ? {} : { ttl: retentionMs };
     const dispatchContext =
       options.headers === undefined && options.requestTimeoutMs === undefined
         ? undefined

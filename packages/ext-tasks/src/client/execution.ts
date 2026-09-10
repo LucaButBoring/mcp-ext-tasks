@@ -85,6 +85,12 @@ export function taskPollInterval(
   );
 }
 
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+function safeTimerDelay(delayMs: number): number {
+  return Math.min(MAX_TIMER_DELAY_MS, Math.max(0, delayMs));
+}
+
 /** Waits for the next task poll while remaining abortable. */
 export async function waitForTaskPoll(
   delayMs: number,
@@ -94,7 +100,7 @@ export async function waitForTaskPoll(
   try {
     await withAbort(
       new Promise<void>((resolve) => {
-        timeout = setTimeout(resolve, Math.max(0, delayMs));
+        timeout = setTimeout(resolve, safeTimerDelay(delayMs));
       }),
       signal,
     );
@@ -172,6 +178,7 @@ export class TaskExecution<
   private updatesAcquired = false;
   private cancelPromise: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
+  private releaseLifecycleListener: (() => void) | undefined;
   private settlementPromise:
     Promise<ToolExecutionSettlement<TResult>> | undefined;
   private settled = false;
@@ -195,10 +202,17 @@ export class TaskExecution<
     const { lifecycleSignal } = options;
     if (lifecycleSignal !== undefined) {
       const abort = (): void => {
+        this.releaseLifecycleListener?.();
         this.controller.abort(lifecycleSignal.reason);
       };
       if (lifecycleSignal.aborted) abort();
-      else lifecycleSignal.addEventListener("abort", abort, { once: true });
+      else {
+        lifecycleSignal.addEventListener("abort", abort, { once: true });
+        this.releaseLifecycleListener = () => {
+          lifecycleSignal.removeEventListener("abort", abort);
+          this.releaseLifecycleListener = undefined;
+        };
+      }
     }
     this.resultPromise = options.driver({
       accept: (snapshot) => this.acceptSnapshot(snapshot),
@@ -477,7 +491,7 @@ export class TaskExecution<
       const onAbort = (): void => {
         finish(this.controller.signal.reason);
       };
-      const timeout = setTimeout(onTurn, Math.max(0, delayMs));
+      const timeout = setTimeout(onTurn, safeTimerDelay(delayMs));
       this.turnWaiters.add(onTurn);
       this.controller.signal.addEventListener("abort", onAbort, { once: true });
     });
@@ -562,6 +576,7 @@ export class TaskExecution<
   detach(): Promise<void> {
     if (this.closed) return Promise.resolve();
     this.closed = true;
+    this.releaseLifecycleListener?.();
     this.controller.abort(this.closedError);
     this.inputController.abort(this.closedError);
     return Promise.resolve();
@@ -665,6 +680,7 @@ export class ImmediateExecution<
   private readonly outcomePromise: Promise<TaskOutcome<TResult>>;
   private settlementPromise:
     Promise<ToolExecutionSettlement<TResult>> | undefined;
+  private updatesAcquired = false;
 
   constructor(
     readonly applicationContext: TApplicationContext,
@@ -676,6 +692,14 @@ export class ImmediateExecution<
   }
 
   updates(signal?: AbortSignal): AsyncIterable<TaskExecutionEvent<TResult>> {
+    if (this.updatesAcquired) throw new TaskUpdatesAlreadyAcquiredError();
+    this.updatesAcquired = true;
+    return this.observeOutcome(signal);
+  }
+
+  private observeOutcome(
+    signal?: AbortSignal,
+  ): AsyncIterable<TaskExecutionEvent<TResult>> {
     throwIfAborted(signal);
     const outcome = this.result();
     return {
@@ -694,7 +718,7 @@ export class ImmediateExecution<
   ): Promise<ToolExecutionSettlement<TResult>> {
     this.settlementPromise ??= settleExecution(
       this,
-      this.updates(options.signal),
+      this.observeOutcome(options.signal),
       options,
     );
     return this.settlementPromise;

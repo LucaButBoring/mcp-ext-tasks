@@ -281,7 +281,11 @@ describe("V2 input and task behavior", () => {
               observed.push({ request, context });
               return (
                 request.kind === "sampling"
-                  ? { model: "m", role: "assistant", content: { type: "text" } }
+                  ? {
+                      model: "m",
+                      role: "assistant",
+                      content: { type: "text", text: "sampled" },
+                    }
                   : request.kind === "roots"
                     ? { roots: [{ uri: "file:///root" }] }
                     : { action: "cancel" }

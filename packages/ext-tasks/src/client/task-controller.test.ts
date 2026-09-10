@@ -91,7 +91,9 @@ describe("manual task controller", () => {
       );
     };
     const session = withTasks(port, { tools });
-    const controller = session.task(taskId("manual-v2"));
+    const controller = session.task(taskId("manual-v2"), {
+      headers: { "x-route": "blue", "mcp-name": "caller-value" },
+    });
 
     await expect(controller.snapshot()).resolves.toMatchObject({
       taskId: "manual-v2",
@@ -123,6 +125,12 @@ describe("manual task controller", () => {
             extensions: { "io.modelcontextprotocol/tasks": {} },
           },
         },
+      });
+    }
+    for (const dispatchOptions of port.dispatchOptions) {
+      expect(dispatchOptions?.context?.headers).toEqual({
+        "x-route": "blue",
+        "Mcp-Name": "manual-v2",
       });
     }
     expect(

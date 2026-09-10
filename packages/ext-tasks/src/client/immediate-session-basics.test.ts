@@ -128,6 +128,32 @@ describe("immediate and session basics", () => {
     await session.close();
   });
 
+  it("rejects invalid requested retention before dispatch", async () => {
+    const port = new FakePort({ generation: "v1", capabilities: {} });
+    const session = withTasks(port, {
+      tools: { currentTool: () => undefined },
+    });
+
+    for (const retentionMs of [
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.MAX_SAFE_INTEGER + 1,
+    ])
+      await expect(
+        session.callTool("x", undefined, { task: { retentionMs } }),
+      ).rejects.toThrow("non-negative safe integer");
+    expect(port.requests).toEqual([]);
+
+    port.response = { kind: "result", result: { content: [] } };
+    await expect(
+      session.callTool("x", undefined, { task: { retentionMs: 0 } }),
+    ).resolves.toBeDefined();
+    expect(port.requests).toHaveLength(1);
+    await session.close();
+  });
+
   it("adds requested TTL only to V1 task calls", async () => {
     const port = new FakePort({
       generation: "v1",

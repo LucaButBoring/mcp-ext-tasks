@@ -222,15 +222,28 @@ export interface TaskRpcV2 {
   ) => Promise<void>;
 }
 
+function v2TaskDispatchContext(options: TaskRpcOptions): DispatchContext {
+  const headers = Object.fromEntries(
+    Object.entries(options.context?.headers ?? {}).filter(
+      ([name]) => name.toLowerCase() !== "mcp-name",
+    ),
+  );
+  return {
+    ...options.context,
+    headers: { ...headers, "Mcp-Name": options.taskId },
+  };
+}
+
 async function dispatchTaskRpc<T>(
   options: TaskRpcOptions,
   request: JsonValue,
   schema: InternalSchema<T> | RuntimeCodec<T>,
   signal: AbortSignal | undefined,
+  context: DispatchContext | undefined = options.context,
 ): Promise<T> {
   const response = await dispatchWithRetry(options.port, request, {
     signal,
-    context: options.context,
+    context,
   });
   return parseResult(schema, responseResult(response));
 }
@@ -278,6 +291,7 @@ export function createTaskRpc(
 
   const params = <T extends Readonly<Record<string, JsonValue>>>(value: T) =>
     withTaskCapabilityV2(value);
+  const context = v2TaskDispatchContext(options);
   return {
     generation,
     get: (signal) =>
@@ -286,6 +300,7 @@ export function createTaskRpc(
         { method: "tasks/get", params: params({ taskId: options.taskId }) },
         GetTaskResultV2Schema,
         signal,
+        context,
       ),
     cancel: async (signal) => {
       await dispatchTaskRpc(
@@ -293,6 +308,7 @@ export function createTaskRpc(
         { method: "tasks/cancel", params: params({ taskId: options.taskId }) },
         CancelTaskResultV2Schema,
         signal,
+        context,
       );
     },
     update: async (inputResponses, signal) => {
@@ -304,6 +320,7 @@ export function createTaskRpc(
         },
         UpdateTaskResultV2Schema,
         signal,
+        context,
       );
     },
   };

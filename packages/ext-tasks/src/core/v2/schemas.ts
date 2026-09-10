@@ -129,6 +129,28 @@ const ContentBlockV2Schema = z.union([
   ResourceLinkContentBlockV2Schema,
   EmbeddedResourceContentBlockV2Schema,
 ]);
+const ToolUseContentBlockV2Schema = openObject({
+  type: z.literal("tool_use"),
+  id: z.string(),
+  name: z.string(),
+  input: JsonObjectSchema,
+  _meta: MetaSchema.optional(),
+});
+const ToolResultContentBlockV2Schema = openObject({
+  type: z.literal("tool_result"),
+  toolUseId: z.string(),
+  content: z.array(ContentBlockV2Schema),
+  structuredContent: JsonValueSchema.optional(),
+  isError: z.boolean().optional(),
+  _meta: MetaSchema.optional(),
+});
+const SamplingMessageContentBlockV2Schema = z.union([
+  TextContentBlockV2Schema,
+  ImageContentBlockV2Schema,
+  AudioContentBlockV2Schema,
+  ToolUseContentBlockV2Schema,
+  ToolResultContentBlockV2Schema,
+]);
 
 const ToolV2Schema = openObject({
   name: z.string(),
@@ -221,9 +243,13 @@ const CallToolResultV2Schema = z.union([
 ]);
 
 const CreateMessageResultV2Schema = openObject({
-  content: JsonValueSchema,
+  content: z.union([
+    SamplingMessageContentBlockV2Schema,
+    z.array(SamplingMessageContentBlockV2Schema),
+  ]),
   model: z.string(),
   role: z.enum(["user", "assistant"]),
+  stopReason: z.string().optional(),
 });
 const ListRootsResultV2Schema = openObject({
   roots: z.array(JsonValueSchema),

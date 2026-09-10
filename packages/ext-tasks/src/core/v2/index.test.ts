@@ -14,6 +14,7 @@ import {
   ErrorV2Schema,
   GetTaskRequestV2Schema,
   GetTaskResultV2Schema,
+  CreateMessageResultV2Schema,
   InputRequestsV2Schema,
   InputResponsesV2Schema,
   TaskStatusNotificationParamsV2Schema,
@@ -56,6 +57,49 @@ const asJson = (value: unknown): JsonValue =>
   JSON.parse(JSON.stringify(value)) as JsonValue;
 
 describe("V2 runtime wire contracts", () => {
+  it("validates sampling result content blocks", () => {
+    for (const content of [
+      { type: "text", text: "hello" },
+      [{ type: "audio", data: "AA==", mimeType: "audio/wav" }],
+      {
+        type: "tool_use",
+        id: "call-1",
+        name: "weather",
+        input: { city: "Oslo" },
+      },
+      {
+        type: "tool_result",
+        toolUseId: "call-1",
+        content: [{ type: "text", text: "cold" }],
+        structuredContent: { temperature: 2 },
+      },
+    ]) {
+      expect(
+        CreateMessageResultV2Schema.safeParse({
+          content,
+          model: "test-model",
+          role: "assistant",
+          stopReason: "endTurn",
+        }).success,
+      ).toBe(true);
+    }
+
+    for (const content of [
+      1,
+      null,
+      { type: "bogus" },
+      { type: "resource_link", name: "x", uri: "file:///x" },
+      { type: "tool_use", name: "missing-id", input: {} },
+    ])
+      expect(
+        CreateMessageResultV2Schema.safeParse({
+          content,
+          model: "test-model",
+          role: "assistant",
+        }).success,
+      ).toBe(false);
+  });
+
   it("accepts every valid base Task and rejects missing required fields, invalid integers, and statuses", () => {
     fc.assert(
       fc.property(baseTask, (task) => {
@@ -245,7 +289,18 @@ describe("V2 runtime wire contracts", () => {
             }),
             fc.record({ roots: fc.array(fc.jsonValue()) }),
             fc.record({
-              content: fc.jsonValue(),
+              content: fc.oneof(
+                fc.record({
+                  type: fc.constant("text" as const),
+                  text: fc.string(),
+                }),
+                fc.array(
+                  fc.record({
+                    type: fc.constant("text" as const),
+                    text: fc.string(),
+                  }),
+                ),
+              ),
               model: fc.string(),
               role: fc.constantFrom("user" as const, "assistant" as const),
             }),
@@ -637,7 +692,7 @@ describe("V2 runtime wire contracts", () => {
         response: {
           action: "invalid",
           roots: [],
-          content: {},
+          content: { type: "text", text: "ok" },
           model: "model",
           role: "assistant",
         },
@@ -647,7 +702,7 @@ describe("V2 runtime wire contracts", () => {
       InputResponsesV2Schema.safeParse({
         response: {
           roots: "invalid",
-          content: {},
+          content: { type: "text", text: "ok" },
           model: "model",
           role: "assistant",
         },
@@ -658,7 +713,7 @@ describe("V2 runtime wire contracts", () => {
         response: {
           action: "accept",
           roots: "ignored extension value",
-          content: {},
+          content: { type: "text", text: "ignored extension value" },
           model: 1,
           role: "invalid",
         },

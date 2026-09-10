@@ -1,5 +1,5 @@
 import fc from "fast-check";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   DispatchError,
   JsonRpcResponseError,
@@ -9,7 +9,11 @@ import {
   toolDeclaration,
   withTasks,
 } from "./index.js";
-import { deterministicJson } from "./execution.js";
+import {
+  deterministicJson,
+  TaskExecution,
+  waitForTaskPoll,
+} from "./execution.js";
 import {
   FakePort,
   asJson,
@@ -23,6 +27,97 @@ describe("task lifecycle and races", () => {
     expect(deterministicJson(undefined)).toBe("[undefined]");
     expect(deterministicJson({ keep: 1, omit: undefined })).toBe('{"keep":1}');
   });
+  it("caps poll timers at the platform maximum delay", async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      let settled = false;
+      const waiting = waitForTaskPoll(2_147_483_648, controller.signal).then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toBe(false);
+      controller.abort();
+      await waiting;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases the session lifecycle listener when task ownership ends", async () => {
+    const lifecycle = new AbortController();
+    const remove = vi.spyOn(lifecycle.signal, "removeEventListener");
+    const execution = new TaskExecution({
+      applicationContext: undefined,
+      handle: {
+        generation: "v2",
+        taskId: "listener-task" as never,
+        originalOperation: "tools/call",
+      },
+      endpointId: "endpoint" as never,
+      initialSnapshot: {
+        generation: "v2",
+        task: {
+          taskId: "listener-task",
+          status: "working",
+          createdAt: "a",
+          lastUpdatedAt: "a",
+          ttlMs: null,
+        },
+      },
+      driver: ({ signal, errors }) =>
+        new Promise<never>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              reject(errors.closed);
+            },
+            { once: true },
+          );
+        }),
+      cancelTask: () => Promise.resolve(),
+      lifecycleSignal: lifecycle.signal,
+    });
+
+    await execution.detach();
+    expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
+    await expect(execution.result()).resolves.toMatchObject({
+      status: "failed",
+    });
+  });
+
+  it("enforces one-owner immediate updates without consuming them during settle", async () => {
+    const port = new FakePort();
+    port.response = { kind: "result", result: { content: [] } };
+    const session = withTasks(port, {
+      tools: { currentTool: () => undefined },
+    });
+
+    const updatesFirst = await session.callTool("updates-first");
+    updatesFirst.updates();
+    expect(() => updatesFirst.updates()).toThrow(
+      TaskUpdatesAlreadyAcquiredError,
+    );
+    await expect(updatesFirst.settle()).resolves.toMatchObject({
+      outcome: { status: "completed" },
+    });
+
+    const settleFirst = await session.callTool("settle-first");
+    await expect(settleFirst.settle()).resolves.toMatchObject({
+      outcome: { status: "completed" },
+    });
+    settleFirst.updates();
+    expect(() => settleFirst.updates()).toThrow(
+      TaskUpdatesAlreadyAcquiredError,
+    );
+    await session.close();
+  });
+
   it("shares cancellation and enforces single-consumer task updates", async () => {
     const port = new FakePort({ generation: "v2", capabilities: {} });
     let cancelCalls = 0;

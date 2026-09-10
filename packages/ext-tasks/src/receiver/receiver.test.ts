@@ -134,6 +134,33 @@ describe("bindTaskReceiver", () => {
     ).rejects.toThrow("expired");
   });
 
+  it("chunks TTLs beyond the maximum timer delay", async () => {
+    vi.useFakeTimers();
+    const host = new Host();
+    const ttlMs = 2_147_483_647 + 1_000;
+    bindTaskReceiver(asClient(host), {
+      methods: { "sampling/createMessage": true },
+      ttlMs,
+      sampling: () => new Promise<Record<string, never>>(() => undefined),
+      createTaskId: () => "long-lived",
+    });
+
+    await host.call("sampling/createMessage");
+    await vi.advanceTimersByTimeAsync(2_147_483_647);
+    await expect(
+      host.call("tasks/get", { taskId: "long-lived" }),
+    ).resolves.toMatchObject({ taskId: "long-lived", ttl: ttlMs });
+
+    await vi.advanceTimersByTimeAsync(999);
+    await expect(
+      host.call("tasks/get", { taskId: "long-lived" }),
+    ).resolves.toMatchObject({ taskId: "long-lived" });
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(
+      host.call("tasks/get", { taskId: "long-lived" }),
+    ).rejects.toThrow("expired");
+  });
+
   it("advertises and installs only enabled request methods", () => {
     const host = new Host();
     const binding = bindTaskReceiver(asClient(host), {

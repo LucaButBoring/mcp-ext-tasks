@@ -102,6 +102,7 @@ describe("V1 input and task behavior", () => {
 
   it("fails closed when the input handler rejects", async () => {
     const port = new FakePort({ generation: "v1", capabilities: {} });
+    const errors: Error[] = [];
     let settlement: JsonRpcResponse | undefined;
     port.dispatchHandler = async () => {
       settlement = await port.serve({
@@ -116,12 +117,15 @@ describe("V1 input and task behavior", () => {
         await Promise.resolve();
         throw new Error("declined");
       },
+      onError: (error) => errors.push(error),
     });
     await session.callTool("x");
     expect(settlement).toEqual({
       kind: "result",
       result: { action: "cancel" },
     });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ message: "declined" });
     await session.close();
   });
 

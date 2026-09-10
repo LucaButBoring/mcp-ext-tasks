@@ -61,6 +61,8 @@ interface V2InputContext<TApplicationContext> extends V2TaskRpcContext {
   readonly signal: AbortSignal;
 }
 
+const MAX_TASK_INPUT_ROUNDS = 10;
+
 type InputAcquisition =
   | { readonly kind: "new" }
   | { readonly kind: "duplicate" }
@@ -86,6 +88,14 @@ class InputRequestLedger {
     return acquired.fingerprint === fingerprint
       ? { kind: "duplicate" }
       : { kind: "incompatible" };
+  }
+
+  hasNewInput(
+    inputRequests: Readonly<Record<string, InputRequestV2>>,
+  ): boolean {
+    return Object.keys(inputRequests).some(
+      (inputKey) => !this.fingerprints.has(inputKey),
+    );
   }
 
   commit(inputKey: string): void {
@@ -135,6 +145,20 @@ async function driveTaskExecutionV2<TResult, TApplicationContext>(args: {
   let latestDetailedTask = options.initialDetailedTask;
   let lastNotificationSequence = 0;
   const acquiredRequestLedger = new InputRequestLedger();
+  let inputRound = 0;
+  const resolveTaskInput = async (task: DetailedTaskV2): Promise<void> => {
+    if (
+      task.status === "input_required" &&
+      acquiredRequestLedger.hasNewInput(task.inputRequests)
+    ) {
+      if (inputRound >= MAX_TASK_INPUT_ROUNDS)
+        throw new Error(
+          `Task exceeded ${String(MAX_TASK_INPUT_ROUNDS)} input-required rounds`,
+        );
+      inputRound += 1;
+    }
+    await resolveAndSubmitInputRequests({ task, inputContext });
+  };
   const inputContext: V2InputContext<TApplicationContext> = {
     ...rpcContext,
     applicationContext: options.applicationContext,
@@ -146,10 +170,7 @@ async function driveTaskExecutionV2<TResult, TApplicationContext>(args: {
   };
 
   if (latestDetailedTask !== undefined)
-    await resolveAndSubmitInputRequests({
-      task: latestDetailedTask,
-      inputContext,
-    });
+    await resolveTaskInput(latestDetailedTask);
 
   while (!terminalStatus(knownStatus)) {
     const delayMs = taskPollInterval(
@@ -176,10 +197,7 @@ async function driveTaskExecutionV2<TResult, TApplicationContext>(args: {
       throw new Error("V2 task driver accepted a non-V2 snapshot");
     knownStatus = accepted.task.status;
     latestDetailedTask = accepted.task as DetailedTaskV2;
-    await resolveAndSubmitInputRequests({
-      task: latestDetailedTask,
-      inputContext,
-    });
+    await resolveTaskInput(latestDetailedTask);
   }
 
   if (driverContext.isClosed()) throw driverContext.errors.closed;

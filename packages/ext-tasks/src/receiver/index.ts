@@ -91,6 +91,8 @@ type Handler = (request: unknown, context?: unknown) => Promise<unknown>;
 type FinalDisposition = "expiry" | "close";
 type TaskDisposition = "cancel" | FinalDisposition;
 
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
 interface TaskRecord {
   task: TaskV1;
   readonly method: TaskReceiverMethod;
@@ -262,11 +264,17 @@ export function bindTaskReceiver(
   };
   const armExpiry = (record: TaskRecord): void => {
     if (record.expiresAt === null) return;
+    const remainingMs = record.expiresAt - now();
+    if (remainingMs <= 0) {
+      remove(record, "expiry");
+      return;
+    }
     const timer = setTimeout(
       () => {
-        remove(record, "expiry");
+        record.expiryTimer = undefined;
+        armExpiry(record);
       },
-      Math.max(0, record.expiresAt - now()),
+      Math.min(remainingMs, MAX_TIMER_DELAY_MS),
     );
     record.expiryTimer = timer;
     detachTimer(timer);

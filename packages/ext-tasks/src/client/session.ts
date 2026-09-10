@@ -452,6 +452,25 @@ class PortTaskEnabledSession<
       );
     }
 
+    if (
+      generation === "v2" &&
+      preference === "require" &&
+      !isCreateTaskResultV2(wireResult)
+    )
+      throw new Error(
+        "Task execution was required but the server returned an immediate result",
+      );
+    if (
+      generation === "v2" &&
+      preference === "forbid" &&
+      isCreateTaskResultV2(wireResult)
+    ) {
+      this.cleanupLateTaskCreation(response, generation, false);
+      throw new Error(
+        "Task execution was forbidden but the server returned a task",
+      );
+    }
+
     if (generation === "v2" && isCreateTaskResultV2(wireResult)) {
       const created = parseResult(CreateTaskResultV2Schema, wireResult);
       const handle: InternalTaskHandle & { readonly generation: "v2" } = {
@@ -850,7 +869,8 @@ class PortTaskEnabledSession<
       if (!isJsonValue(result))
         throw new Error("Input handler returned a non-JSON value");
       return { kind: "result", result };
-    } catch {
+    } catch (error) {
+      this.reportBackgroundError(reasonAsError(error));
       return defaultServerRequestResponse(incoming);
     }
   }

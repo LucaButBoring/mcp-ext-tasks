@@ -1,5 +1,5 @@
 import fc from "fast-check";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { toolDeclaration, withTasks } from "./index.js";
 import {
   FakePort,
@@ -72,6 +72,126 @@ describe("V2 input and task behavior", () => {
       resultType: "complete",
       content: [{ type: "text", text: "done" }],
     });
+    await session.close();
+  });
+
+  it("enforces V2 task preferences after classifying the response", async () => {
+    const immediatePort = new FakePort({ generation: "v2", capabilities: {} });
+    immediatePort.response = { kind: "result", result: { content: [] } };
+    const immediateSession = withTasks(immediatePort, {
+      tools: { currentTool: () => undefined },
+    });
+    await expect(
+      immediateSession.callTool("required", undefined, {
+        task: { preference: "require" },
+      }),
+    ).rejects.toThrow("server returned an immediate result");
+    await immediateSession.close();
+
+    const taskPort = new FakePort({ generation: "v2", capabilities: {} });
+    taskPort.dispatchHandler = (request) => {
+      const method = expectRecord(request).method;
+      if (method === "tools/call")
+        return Promise.resolve({
+          kind: "result",
+          result: asJson({
+            resultType: "task",
+            taskId: "forbidden-task",
+            status: "working",
+            createdAt: "a",
+            lastUpdatedAt: "a",
+            ttlMs: null,
+          }),
+        });
+      if (method === "tasks/cancel")
+        return Promise.resolve({
+          kind: "result",
+          result: { resultType: "complete" },
+        });
+      throw new Error(`unexpected method ${formatJson(method)}`);
+    };
+    const taskSession = withTasks(taskPort, {
+      tools: { currentTool: () => undefined },
+    });
+    await expect(
+      taskSession.callTool("forbidden", undefined, {
+        task: { preference: "forbid" },
+      }),
+    ).rejects.toThrow("server returned a task");
+    await vi.waitFor(() => {
+      expect(
+        taskPort.requests.some(
+          (request) => expectRecord(request).method === "tasks/cancel",
+        ),
+      ).toBe(true);
+    });
+    await taskSession.close();
+  });
+
+  it("bounds advancing V2 task input rounds", async () => {
+    const port = new FakePort({ generation: "v2", capabilities: {} });
+    let getCalls = 0;
+    let handlerCalls = 0;
+    port.dispatchHandler = (request) => {
+      const method = expectRecord(request).method;
+      if (method === "tools/call")
+        return Promise.resolve({
+          kind: "result",
+          result: asJson({
+            resultType: "task",
+            taskId: "bounded-input",
+            status: "working",
+            createdAt: "a",
+            lastUpdatedAt: "a",
+            ttlMs: null,
+            pollIntervalMs: 0,
+          }),
+        });
+      if (method === "tasks/get") {
+        getCalls += 1;
+        return Promise.resolve({
+          kind: "result",
+          result: asJson({
+            resultType: "complete",
+            taskId: "bounded-input",
+            status: "input_required",
+            createdAt: "a",
+            lastUpdatedAt: String(getCalls),
+            ttlMs: null,
+            pollIntervalMs: 0,
+            inputRequests: {
+              [`round-${String(getCalls)}`]: { method: "roots/list" },
+            },
+          }),
+        });
+      }
+      if (method === "tasks/update")
+        return Promise.resolve({
+          kind: "result",
+          result: { resultType: "complete" },
+        });
+      throw new Error(`unexpected method ${formatJson(method)}`);
+    };
+    const session = withTasks(port, {
+      tools: { currentTool: () => undefined },
+      onInputRequest: async () => {
+        await Promise.resolve();
+        handlerCalls += 1;
+        return { roots: [] } as never;
+      },
+    });
+    const execution = await session.callTool("bounded");
+    await expect(execution.result()).resolves.toMatchObject({
+      status: "failed",
+      error: { message: "Task exceeded 10 input-required rounds" },
+    });
+    expect(handlerCalls).toBe(10);
+    expect(getCalls).toBe(11);
+    expect(
+      port.requests.filter(
+        (request) => expectRecord(request).method === "tasks/update",
+      ),
+    ).toHaveLength(10);
     await session.close();
   });
 

@@ -32,17 +32,22 @@ export class ManagedToolDeclarations implements ToolDeclarationProvider {
   async ensureReady(signal?: AbortSignal): Promise<void> {
     throwIfAborted(signal);
     const wait = async (): Promise<void> => {
-      try {
-        await this.initialReady;
-      } catch (error) {
-        if (
-          this.closed ||
-          (error instanceof DOMException && error.name === "AbortError")
-        )
-          throw error;
-        this.initialReady = this.refresh();
-        void this.initialReady.catch(() => {});
-        await this.initialReady;
+      let retried = false;
+      for (;;) {
+        const pending = this.initialReady;
+        try {
+          await pending;
+          return;
+        } catch (error) {
+          if (this.closed) throw error;
+          // Follow the replacement rather than failing permanently because a
+          // newer refresh superseded this one (early tools/list_changed).
+          if (this.initialReady !== pending) continue;
+          if (retried) throw error;
+          retried = true;
+          this.initialReady = this.refresh();
+          void this.initialReady.catch(() => {});
+        }
       }
     };
     const waiting = wait();
@@ -81,7 +86,11 @@ export class ManagedToolDeclarations implements ToolDeclarationProvider {
       return;
     const record = notification as Readonly<Record<string, JsonValue>>;
     if (record.method !== "notifications/tools/list_changed") return;
-    void this.refresh().catch((error: unknown) => {
+    const refreshed = this.refresh();
+    // Point readiness at the newest refresh because a superseded initial
+    // refresh's abort would otherwise leave ensureReady() permanently rejected.
+    this.initialReady = refreshed;
+    void refreshed.catch((error: unknown) => {
       if (!(error instanceof DOMException && error.name === "AbortError")) {
         this.reportError(
           error instanceof Error

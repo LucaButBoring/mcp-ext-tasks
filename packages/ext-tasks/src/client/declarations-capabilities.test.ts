@@ -191,6 +191,45 @@ describe("declarations and capabilities", () => {
     await session.close();
   });
 
+  it("recovers readiness when an early list_changed supersedes the initial refresh", async () => {
+    const port = new FakePort({ generation: "v1", capabilities: {} });
+    let listCount = 0;
+    port.dispatchHandler = (request, options) => {
+      const record = expectRecord(request);
+      if (record.method === "tools/call")
+        return Promise.resolve<JsonRpcResponse>({
+          kind: "result",
+          result: asJson({ content: [] }),
+        });
+      if (record.method !== "tools/list")
+        throw new Error(`unexpected method ${formatJson(record.method)}`);
+      listCount += 1;
+      if (listCount === 1)
+        return new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener(
+            "abort",
+            () => {
+              reject(new DOMException("superseded", "AbortError"));
+            },
+            { once: true },
+          );
+        });
+      return Promise.resolve<JsonRpcResponse>({
+        kind: "result",
+        result: asJson({
+          tools: [{ name: "x", inputSchema: { type: "object" } }],
+        }),
+      });
+    };
+    const session = withTasks(port);
+    // Readiness must follow the replacement instead of rejecting forever
+    // because the early notification aborts the constructor's initial refresh.
+    port.notify({ method: "notifications/tools/list_changed" });
+    const execution = await session.callTool("x");
+    expect(execution.kind).toBe("immediate");
+    await session.close();
+  });
+
   it("rejects duplicate tools deterministically and aborts managed discovery on close", async () => {
     const duplicatePort = new FakePort({ generation: "v1", capabilities: {} });
     duplicatePort.dispatchHandler = async (request) => {

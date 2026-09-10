@@ -132,6 +132,27 @@ describe("immediate and session basics", () => {
     await session.close();
   });
 
+  it("accepts modern immediate result content when tasks are not advertised", async () => {
+    // The default codec must accept the union of valid immediate result
+    // shapes because generation "none" retains no protocol era. A
+    // resultType-bearing modern result with non-object structuredContent is
+    // valid V2 and rejected by the V1 schema (which requires an object there).
+    const port = new FakePort({ generation: "none" });
+    const modernResult = {
+      resultType: "complete",
+      content: [{ type: "text", text: "hi" }],
+      structuredContent: [1, 2, 3],
+    };
+    port.response = { kind: "result", result: asJson(modernResult) };
+    const session = withTasks(port, {
+      tools: { currentTool: () => undefined },
+    });
+    const execution = await session.callTool("modern");
+    expect(execution.kind).toBe("immediate");
+    await expect(legacyResult(execution)).resolves.toEqual(modernResult);
+    await session.close();
+  });
+
   it("rejects invalid requested retention before dispatch", async () => {
     const port = new FakePort({ generation: "v1", capabilities: {} });
     const session = withTasks(port, {

@@ -57,9 +57,20 @@ function codecFromSchema<T>(schema: {
 export function defaultResultCodec(
   generation: SessionTaskCapabilities["generation"],
 ): RuntimeCodec<CallToolResultV1 | CallToolResultV2> {
-  return generation === "v2"
-    ? codecFromSchema(CallToolResultV2Schema)
-    : codecFromSchema(CallToolResultV1Schema);
+  if (generation === "v2") return codecFromSchema(CallToolResultV2Schema);
+  if (generation === "v1") return codecFromSchema(CallToolResultV1Schema);
+  // Accept the union of valid immediate results because "none" retains no
+  // protocol era: a modern no-Tasks session still returns modern result shapes.
+  const legacyCodec = codecFromSchema(CallToolResultV1Schema);
+  const modernCodec = codecFromSchema(CallToolResultV2Schema);
+  return {
+    parse(value) {
+      const legacy = legacyCodec.parse(value);
+      if (legacy.success) return legacy;
+      const modern = modernCodec.parse(value);
+      return modern.success ? modern : legacy;
+    },
+  };
 }
 
 /** Normalizes an invalidation or abort reason to an Error instance. */

@@ -129,6 +129,14 @@ describe("V2 input and task behavior", () => {
         ),
       ).toBe(true);
     });
+    const cancelIndex = taskPort.requests.findIndex(
+      (request) => expectRecord(request).method === "tasks/cancel",
+    );
+    // The cleanup cancel carries the mandatory V2 Mcp-Name routing header
+    // because late-task cleanup routes through the task RPC.
+    expect(taskPort.dispatchOptions[cancelIndex]?.context?.headers).toEqual({
+      "Mcp-Name": "forbidden-task",
+    });
     await taskSession.close();
   });
 

@@ -72,6 +72,7 @@ import {
 } from "./port.js";
 import type {
   ConnectedMcpSessionPort,
+  DispatchContext,
   IncomingServerRequest,
   JsonRpcResponse,
   SessionTaskCapabilities,
@@ -370,6 +371,7 @@ class PortTaskEnabledSession<
                 lateResponse,
                 generation,
                 callAsTaskV1,
+                dispatchContext,
               );
             },
             () => {},
@@ -418,7 +420,12 @@ class PortTaskEnabledSession<
       }
     } catch (error) {
       if (response !== undefined)
-        this.cleanupLateTaskCreation(response, generation, callAsTaskV1);
+        this.cleanupLateTaskCreation(
+          response,
+          generation,
+          callAsTaskV1,
+          dispatchContext,
+        );
       throw error;
     } finally {
       this.ordinaryInputCandidates.delete(executionId);
@@ -473,7 +480,12 @@ class PortTaskEnabledSession<
       preference === "forbid" &&
       isCreateTaskResultV2(wireResult)
     ) {
-      this.cleanupLateTaskCreation(response, generation, false);
+      this.cleanupLateTaskCreation(
+        response,
+        generation,
+        false,
+        dispatchContext,
+      );
       throw new Error(
         "Task execution was forbidden but the server returned a task",
       );
@@ -637,39 +649,51 @@ class PortTaskEnabledSession<
     }
   }
 
-  private lateTaskCancellationParams(
+  private lateTaskCancellationTarget(
     result: JsonValue,
     generation: SessionTaskCapabilities["generation"],
     callAsTaskV1: boolean,
-  ): JsonValue | undefined {
+  ): { readonly generation: "v1" | "v2"; readonly taskId: TaskId } | undefined {
     if (generation === "v1" && callAsTaskV1) {
       const parsed = CreateTaskResultV1Schema.safeParse(result);
       if (!parsed.success) return undefined;
-      return { taskId: parsed.data.task.taskId as TaskId };
+      return { generation: "v1", taskId: parsed.data.task.taskId as TaskId };
     }
     if (generation !== "v2" || !isCreateTaskResultV2(result)) return undefined;
     const parsed = CreateTaskResultV2Schema.safeParse(result);
     if (!parsed.success) return undefined;
-    return withTaskCapabilityV2({ taskId: parsed.data.taskId as TaskId });
+    return { generation: "v2", taskId: parsed.data.taskId as TaskId };
   }
 
   private cleanupLateTaskCreation(
     response: JsonRpcResponse,
     generation: SessionTaskCapabilities["generation"],
     callAsTaskV1: boolean,
+    context?: DispatchContext,
   ): void {
     if (response.kind !== "result") return;
-    const params = this.lateTaskCancellationParams(
+    const target = this.lateTaskCancellationTarget(
       response.result,
       generation,
       callAsTaskV1,
     );
-    if (params === undefined) return;
-    void dispatchWithRetry(
-      this.port,
-      { method: "tasks/cancel", params },
-      undefined,
-    ).catch(() => {
+    if (target === undefined) return;
+    // Cancel through createTaskRpc because it owns generation-specific wire
+    // details — including the mandatory V2 Mcp-Name routing header that
+    // task-aware routing depends on.
+    const rpc =
+      target.generation === "v1"
+        ? createTaskRpc("v1", {
+            port: this.port,
+            taskId: target.taskId,
+            context,
+          })
+        : createTaskRpc("v2", {
+            port: this.port,
+            taskId: target.taskId,
+            context,
+          });
+    void rpc.cancel().catch(() => {
       // A task returned after call abort is cleaned up on a best-effort basis.
     });
   }

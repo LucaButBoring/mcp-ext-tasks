@@ -1,0 +1,113 @@
+# Publishes the @modelcontextprotocol/ext-tasks package to npm when a GitHub
+# Release is published. Versioning is manual: bump packages/ext-tasks/package.json
+# in the release commit, then cut the GitHub Release from that tag — this workflow
+# picks it up from there.
+name: Publish to npm
+
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate before publishing
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      # Full gate: schema provenance, format, lint, typecheck, tests, build, and
+      # the packed-consumer check. Runs again here rather than trusting CI, so a
+      # publish can never proceed from a commit CI hasn't fully validated.
+      - name: Check schemas, package, and packed consumers
+        run: npm run check
+      - name: Build documentation
+        run: npm run docs:build
+
+  publish:
+    name: Publish
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          registry-url: "https://registry.npmjs.org"
+      - name: Install dependencies
+        run: npm ci
+      # Node 24's bundled npm satisfies the >= 11.5.1 OIDC requirement only from
+      # ~24.6 onward; pin explicitly so the publish never depends on which Node
+      # patch the runner resolves.
+      - name: Ensure npm CLI supports OIDC trusted publishing
+        run: npm install -g npm@11.5.1
+      - name: Determine npm dist-tag
+        id: npm-tag
+        run: |
+          VERSION=$(node -p "require('./packages/ext-tasks/package.json').version")
+          # Pre-release versions publish under the beta dist-tag.
+          if [[ "$VERSION" == *"-"* ]]; then
+            echo "tag=--tag beta" >> "$GITHUB_OUTPUT"
+          # Releases cut from a non-main branch (patch/maintenance lines) publish
+          # under release-X.Y so they never displace latest.
+          elif [[ "${{ github.event.release.target_commitish }}" != "main" ]]; then
+            MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1,2)
+            echo "tag=--tag release-${MAJOR_MINOR}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish to npm
+        run: npm publish --provenance --access public ${{ steps.npm-tag.outputs.tag }}
+        working-directory: packages/ext-tasks
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
+
+  verify:
+    name: Verify published package
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Wait for npm to serve the version
+        run: |
+          VERSION=$(node -p "require('./packages/ext-tasks/package.json').version")
+          for i in $(seq 1 30); do
+            if npm view "@modelcontextprotocol/ext-tasks@${VERSION}" version >/dev/null 2>&1; then
+              echo "npm is serving ${VERSION}."
+              exit 0
+            fi
+            echo "Not visible yet (attempt ${i}/30); waiting 10s..."
+            sleep 10
+          done
+          echo "npm never served ${VERSION} within 5 minutes of publishing."
+          exit 1

@@ -281,7 +281,10 @@ describe("declarations and capabilities", () => {
 
   it("projects one neutral declaration without leaking call listeners", async () => {
     const port = new FakePort({ generation: "v2", capabilities: {} });
-    port.response = { kind: "result", result: { content: [] } };
+    port.response = {
+      kind: "result",
+      result: { resultType: "complete", content: [] },
+    };
     const declaration = toolDeclaration({
       name: "x",
       inputSchema: { type: "object" },
@@ -306,7 +309,10 @@ describe("declarations and capabilities", () => {
 
   it("retains neutral task support while omitting the absent V2 wire field", async () => {
     const port = new FakePort({ generation: "v2", capabilities: {} });
-    port.response = { kind: "result", result: { content: [] } };
+    port.response = {
+      kind: "result",
+      result: { resultType: "complete", content: [] },
+    };
     const declaration = toolDeclaration({
       name: "x",
       inputSchema: { type: "object" },

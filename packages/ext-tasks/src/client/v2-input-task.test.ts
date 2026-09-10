@@ -40,6 +40,7 @@ describe("V2 input and task behavior", () => {
             lastUpdatedAt: "b",
             ttlMs: null,
             result: {
+              resultType: "complete",
               content: [{ type: "text", text: "done" }],
             },
           }),
@@ -77,7 +78,10 @@ describe("V2 input and task behavior", () => {
 
   it("enforces V2 task preferences after classifying the response", async () => {
     const immediatePort = new FakePort({ generation: "v2", capabilities: {} });
-    immediatePort.response = { kind: "result", result: { content: [] } };
+    immediatePort.response = {
+      kind: "result",
+      result: { resultType: "complete", content: [] },
+    };
     const immediateSession = withTasks(immediatePort, {
       tools: { currentTool: () => undefined },
     });
@@ -260,7 +264,7 @@ describe("V2 input and task behavior", () => {
                   createdAt: "a",
                   lastUpdatedAt: "c",
                   ttlMs: null,
-                  result: { content: [] },
+                  result: { resultType: "complete", content: [] },
                 }),
               };
             }
@@ -394,7 +398,7 @@ describe("V2 input and task behavior", () => {
             createdAt: "a",
             lastUpdatedAt: "z",
             ttlMs: null,
-            result: { content: [] },
+            result: { resultType: "complete", content: [] },
           }),
         };
       }
@@ -473,7 +477,7 @@ describe("V2 input and task behavior", () => {
                   createdAt: "a",
                   lastUpdatedAt: "c",
                   ttlMs: null,
-                  result: { content: [] },
+                  result: { resultType: "complete", content: [] },
                 },
           ),
         };
@@ -582,7 +586,7 @@ describe("V2 input and task behavior", () => {
           createdAt: "a",
           lastUpdatedAt: "c",
           ttlMs: null,
-          result: { content: [] },
+          result: { resultType: "complete", content: [] },
         },
       }),
     );
@@ -638,7 +642,7 @@ describe("V2 input and task behavior", () => {
                   status === "completed"
                     ? {
                         ...terminal,
-                        result: { content: [] },
+                        result: { resultType: "complete", content: [] },
                       }
                     : status === "failed"
                       ? {

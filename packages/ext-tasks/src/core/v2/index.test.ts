@@ -52,7 +52,11 @@ const baseTask = fc.record({
   pollIntervalMs: fc.option(fc.integer(), { nil: undefined }),
 });
 const taskFor = (status: TaskStatusV2) =>
-  baseTask.map((task) => ({ ...task, status }));
+  baseTask.map((task) => ({
+    ...task,
+    status,
+    ...(status === "completed" ? { resultType: "complete" as const } : {}),
+  }));
 const asJson = (value: unknown): JsonValue =>
   JSON.parse(JSON.stringify(value)) as JsonValue;
 
@@ -479,10 +483,9 @@ describe("V2 runtime wire contracts", () => {
         },
       ),
     );
-    expect(CallToolResultV2Schema.parse({ content: [] })).toEqual({
-      resultType: "complete",
-      content: [],
-    });
+    expect(CallToolResultV2Schema.safeParse({ content: [] }).success).toBe(
+      false,
+    );
     expect(
       CallToolResultV2Schema.safeParse({ resultType: "complete" }).success,
     ).toBe(false);
@@ -571,12 +574,8 @@ describe("V2 runtime wire contracts", () => {
           .success,
       ).toBe(false);
     }
-    expect(UpdateTaskResultV2Schema.parse({})).toEqual({
-      resultType: "complete",
-    });
-    expect(CancelTaskResultV2Schema.parse({})).toEqual({
-      resultType: "complete",
-    });
+    expect(UpdateTaskResultV2Schema.safeParse({}).success).toBe(false);
+    expect(CancelTaskResultV2Schema.safeParse({}).success).toBe(false);
     expect(
       UpdateTaskResultV2Schema.safeParse({ resultType: "task" }).success,
     ).toBe(false);
@@ -586,7 +585,14 @@ describe("V2 runtime wire contracts", () => {
         fc.dictionary(fc.string(), fc.jsonValue()),
         (task, result) => {
           const parsed = GetTaskResultV2Schema.parse(
-            asJson({ ...task, result }),
+            asJson({
+              ...task,
+              result: {
+                resultType: "complete",
+                content: [],
+                structuredContent: result,
+              },
+            }),
           );
           expect(parsed.resultType).toBe("complete");
         },

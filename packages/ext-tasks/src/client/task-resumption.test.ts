@@ -454,7 +454,7 @@ describe("task reference resumption", () => {
             createdAt: "a",
             lastUpdatedAt: "c",
             ttlMs: null,
-            result: { content: [] },
+            result: { resultType: "complete", content: [] },
           }),
         };
       }
@@ -553,7 +553,7 @@ describe("task reference resumption", () => {
           createdAt: "a",
           lastUpdatedAt: "b",
           ttlMs: null,
-          result: { content: [] },
+          result: { resultType: "complete", content: [] },
         }),
       };
     };
@@ -590,7 +590,7 @@ describe("task reference resumption", () => {
           createdAt: "a",
           lastUpdatedAt: "b",
           ttlMs: null,
-          result: { content: [] },
+          result: { resultType: "complete", content: [] },
         }),
       };
     };

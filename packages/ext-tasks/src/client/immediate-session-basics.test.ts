@@ -101,6 +101,10 @@ describe("immediate and session basics", () => {
 
   it("preserves call metadata and transport headers", async () => {
     const port = new FakePort({ generation: "v2", capabilities: {} });
+    port.response = {
+      kind: "result",
+      result: { resultType: "complete", content: [] },
+    };
     const session = withTasks(port, {
       tools: { currentTool: () => undefined },
     });

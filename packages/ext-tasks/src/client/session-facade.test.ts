@@ -76,7 +76,7 @@ describe("task session facade", () => {
           createdAt: "a",
           lastUpdatedAt: "b",
           ttlMs: 1_000,
-          result: { content: [] },
+          result: { resultType: "complete", content: [] },
         },
       });
     };
@@ -112,7 +112,10 @@ describe("task session facade", () => {
           }),
         };
       if (method === "tasks/cancel")
-        return { kind: "result", result: asJson({}) };
+        return {
+          kind: "result",
+          result: asJson({ resultType: "complete" }),
+        };
       return new Promise(() => {});
     };
     const session = withTasks(port, {
@@ -158,9 +161,9 @@ describe("task session facade", () => {
       if ((request as { method?: string }).method === "tasks/cancel") {
         cancelSeen();
         await releasePromise;
-        return { kind: "result", result: {} };
+        return { kind: "result", result: { resultType: "complete" } };
       }
-      return { kind: "result", result: {} };
+      return { kind: "result", result: { resultType: "complete" } };
     };
     const session = withTasks(port, {
       tools: { currentTool: () => undefined },

@@ -908,12 +908,13 @@ describe("task lifecycle and races", () => {
             jsonrpc: "2.0",
             method: "notifications/tasks",
             params: {
+              resultType: "complete",
               taskId: "synchronous-notification",
               status: "completed",
               createdAt: "a",
               lastUpdatedAt: "b",
               ttlMs: null,
-              result: { content: [] },
+              result: { resultType: "complete", content: [] },
             },
           }),
         );
@@ -1033,7 +1034,7 @@ describe("task lifecycle and races", () => {
             createdAt: "a",
             lastUpdatedAt: "b",
             ttlMs: null,
-            result: { content: [] },
+            result: { resultType: "complete", content: [] },
           }),
         };
       }

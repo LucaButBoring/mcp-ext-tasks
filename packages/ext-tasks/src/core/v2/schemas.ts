@@ -172,7 +172,7 @@ const ToolV2Schema = openObject({
   _meta: MetaSchema.optional(),
 });
 
-const CompleteResultTypeSchema = z.literal("complete").default("complete");
+const CompleteResultTypeSchema = z.literal("complete");
 const CompleteCallToolResultV2Schema = openObject({
   resultType: CompleteResultTypeSchema,
   content: z.array(ContentBlockV2Schema),

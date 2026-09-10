@@ -68,7 +68,10 @@ const cases: readonly MatrixCase[] = [
       lastUpdatedAt: "b",
       ttlMs: 4000,
       pollIntervalMs: 1,
-      result: { content: [{ type: "text", text: "done" }] },
+      result: {
+        resultType: "complete",
+        content: [{ type: "text", text: "done" }],
+      },
     },
   },
 ];

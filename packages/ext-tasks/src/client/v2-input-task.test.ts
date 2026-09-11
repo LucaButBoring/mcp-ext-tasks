@@ -441,6 +441,73 @@ describe("V2 input and task behavior", () => {
     await session.close();
   });
 
+  it("fails the execution when a committed V2 input key is reused incompatibly", async () => {
+    const port = new FakePort({ generation: "v2", capabilities: {} });
+    let getCalls = 0;
+    port.dispatchHandler = async (request) => {
+      await Promise.resolve();
+      const method = expectRecord(request).method;
+      if (method === "tools/call")
+        return {
+          kind: "result",
+          result: asJson({
+            resultType: "task",
+            taskId: "reuse-incompatible",
+            status: "working",
+            createdAt: "a",
+            lastUpdatedAt: "a",
+            ttlMs: null,
+          }),
+        };
+      if (method === "tasks/get") {
+        getCalls += 1;
+        return {
+          kind: "result",
+          result: asJson({
+            resultType: "complete",
+            taskId: "reuse-incompatible",
+            status: "input_required",
+            createdAt: "a",
+            lastUpdatedAt: String(getCalls),
+            ttlMs: null,
+            inputRequests: {
+              same:
+                getCalls === 1
+                  ? { method: "roots/list" }
+                  : { method: "elicitation/create", params: {} },
+            },
+          }),
+        };
+      }
+      if (method === "tasks/update")
+        return { kind: "result", result: { resultType: "complete" } };
+      throw new Error(`unexpected method ${formatJson(method)}`);
+    };
+    const session = withTasks(port, {
+      tools: {
+        currentTool: () =>
+          toolDeclaration({ name: "x", inputSchema: { type: "object" } }),
+      },
+      onInputRequest: async (request) => {
+        await Promise.resolve();
+        // `as never`, because the generic signature cannot relate a runtime
+        // kind branch to TRequest (the suite-wide fake-handler pattern).
+        return (
+          request.kind === "roots"
+            ? { roots: [{ uri: "file:///workspace" }] }
+            : { action: "cancel" }
+        ) as never;
+      },
+    });
+    const execution = await session.callTool("x");
+    // Key "same" returns with a different request shape — a protocol
+    // violation that must fail the execution, not keep it polling.
+    await expect(legacyResult(execution)).rejects.toThrow(
+      "reused incompatibly",
+    );
+    await session.close();
+  });
+
   it("declines keyed V2 elicitation while withholding sampling and roots", async () => {
     const port = new FakePort({ generation: "v2", capabilities: {} });
     let getCalls = 0;

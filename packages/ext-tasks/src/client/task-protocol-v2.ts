@@ -306,10 +306,11 @@ async function resolveInputRequest<TApplicationContext>(args: {
     request,
   );
   if (acquisition.kind !== "new") {
+    // Throwing fails the execution because reusing a key with a different
+    // request is a protocol violation: the client already answered this key,
+    // and polling on would act on input the application never saw.
     if (acquisition.kind === "incompatible")
-      inputContext.reportError(
-        new Error(`V2 task input key ${inputKey} was reused incompatibly`),
-      );
+      throw new Error(`V2 task input key ${inputKey} was reused incompatibly`);
     return undefined;
   }
 

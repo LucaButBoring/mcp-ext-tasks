@@ -161,6 +161,58 @@ describe("bindTaskReceiver", () => {
     ).rejects.toThrow("expired");
   });
 
+  it("rejects malformed task augmentations and invalid augmentation TTLs", async () => {
+    const host = new Host();
+    bindTaskReceiver(asClient(host), {
+      methods: { "sampling/createMessage": true },
+      sampling: () => Promise.resolve({ ok: true }),
+      createTaskId: () => "augmented",
+    });
+    // `task: true` is not a spec shape: the augmentation is an object.
+    await expect(
+      host.call("sampling/createMessage", { task: true }),
+    ).rejects.toThrow("Task augmentation must be a JSON object");
+    await expect(
+      host.call("sampling/createMessage", { task: [1] }),
+    ).rejects.toThrow("Task augmentation must be a JSON object");
+    await expect(
+      host.call("sampling/createMessage", { task: { ttl: -1 } }),
+    ).rejects.toThrow("task.ttl must be a non-negative integer or null");
+    await expect(
+      host.call("sampling/createMessage", { task: { ttl: 1.5 } }),
+    ).rejects.toThrow("task.ttl must be a non-negative integer or null");
+    // A well-formed augmentation still creates the task.
+    await expect(
+      host.call("sampling/createMessage", { task: { ttl: null } }),
+    ).resolves.toMatchObject({ task: { taskId: "augmented" } });
+  });
+
+  it("blocks tasks/result until the task settles instead of rejecting while pending", async () => {
+    const host = new Host();
+    const work = deferred<Record<string, never>>();
+    bindTaskReceiver(asClient(host), {
+      methods: { "sampling/createMessage": true },
+      sampling: () => work.promise,
+      createTaskId: () => "blocking",
+    });
+    await host.call("sampling/createMessage");
+    // Issued mid-work: it must block (per 2025-11-25), not reject.
+    let settled = false;
+    const pending = host.call("tasks/result", { taskId: "blocking" });
+    void pending.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await flush();
+    expect(settled).toBe(false);
+    work.resolve({});
+    await expect(pending).resolves.toEqual({});
+  });
+
   it("advertises and installs only enabled request methods", () => {
     const host = new Host();
     const binding = bindTaskReceiver(asClient(host), {

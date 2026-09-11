@@ -117,7 +117,16 @@ export function withTaskCapabilityV2<
   T extends Readonly<Record<string, JsonValue>>,
 >(params: T): T & Readonly<Record<string, JsonValue>> {
   const existingMetadata = asObjectRecord(params._meta) ?? {};
-  const capability = { extensions: { [TASKS_EXTENSION_ID_V2]: {} } };
+  // Merging (like frameV2TaskRequest) because replacing the entry would drop
+  // any capabilities and extensions the caller already declared.
+  const existingCapability =
+    asObjectRecord(existingMetadata[CLIENT_CAPABILITIES_META_KEY_V2]) ?? {};
+  const existingExtensions =
+    asObjectRecord(existingCapability.extensions) ?? {};
+  const capability = {
+    ...existingCapability,
+    extensions: { ...existingExtensions, [TASKS_EXTENSION_ID_V2]: {} },
+  };
   return {
     ...params,
     _meta: {

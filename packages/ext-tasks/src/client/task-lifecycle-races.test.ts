@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   DispatchError,
   JsonRpcResponseError,
+  TaskCancelledError,
   TaskExecutionClosedError,
-  TaskFailedError,
   TaskUpdatesAlreadyAcquiredError,
   toolDeclaration,
   withTasks,
@@ -178,8 +178,9 @@ describe("task lifecycle and races", () => {
       },
     });
     await execution.close();
+    // Cancelled, not closed: the awaited cancel settled the outcome first.
     await expect(legacyResult(execution)).rejects.toBeInstanceOf(
-      TaskExecutionClosedError,
+      TaskCancelledError,
     );
     await session.close();
   });
@@ -237,11 +238,9 @@ describe("task lifecycle and races", () => {
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(unhandled).toEqual([]);
       const outcome = await result;
-      expect(outcome.status).toBe("failed");
-      if (outcome.status !== "failed")
-        throw new Error("Expected failed outcome");
-      expect(outcome.error).toBeInstanceOf(TaskFailedError);
-      expect(outcome.error.cause).toBeInstanceOf(TaskExecutionClosedError);
+      // Cancelled, not failed-as-closed: the cancel ack settled the outcome
+      // before close ran.
+      expect(outcome.status).toBe("cancelled");
     } finally {
       process.off("unhandledRejection", onUnhandledRejection);
     }
@@ -406,8 +405,10 @@ describe("task lifecycle and races", () => {
         else await expect(execution.cancel()).rejects.toThrow("cancel failed");
         expect(cancelCalls).toBe(retryable ? 2 : 1);
         await execution.close();
+        // A successful cancel settles the outcome as cancelled; only a
+        // failed one leaves close to decide it.
         await expect(legacyResult(execution)).rejects.toBeInstanceOf(
-          TaskExecutionClosedError,
+          retryable ? TaskCancelledError : TaskExecutionClosedError,
         );
         await session.close();
       }),

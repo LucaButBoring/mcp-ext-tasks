@@ -578,7 +578,16 @@ export class TaskExecution<
 
   cancel(signal?: AbortSignal): Promise<void> {
     throwIfAborted(signal);
-    this.cancelPromise ??= this.cancelTask(this.cancellationController.signal);
+    // The server's cancel ack ends the local lifetime because V2 cancellation
+    // is cooperative: the server may never reach `cancelled`, so waiting for
+    // a terminal snapshot could leave result() pending forever.
+    this.cancelPromise ??= this.cancelTask(
+      this.cancellationController.signal,
+    ).then(() => {
+      this.releaseLifecycleListener?.();
+      this.inputController.abort(this.cancelledError);
+      this.controller.abort(this.cancelledError);
+    });
     return signal === undefined
       ? this.cancelPromise
       : withAbort(this.cancelPromise, signal);

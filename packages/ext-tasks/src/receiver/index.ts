@@ -160,6 +160,30 @@ function hasTaskAugmentation(request: unknown): boolean {
   );
 }
 
+function asTaskAugmentationRecord(
+  value: JsonValue,
+): Record<string, JsonValue> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, JsonValue>)
+    : undefined;
+}
+
+function validateTaskAugmentation(request: unknown): void {
+  const params = paramsOf(request);
+  // Absent is fine: without a prior handler, a plain request runs as a task.
+  // Object.hasOwn, because indexing types absent keys as JsonValue.
+  if (!Object.hasOwn(params, "task")) return;
+  // A present augmentation must be an object (the 2025-11-25 shape);
+  // `task: true` would leave us guessing at what the requester meant.
+  const augmentation = asTaskAugmentationRecord(params.task);
+  if (augmentation === undefined)
+    throw new Error("Task augmentation must be a JSON object");
+  if (!Object.hasOwn(augmentation, "ttl") || augmentation.ttl === null) return;
+  const ttl = augmentation.ttl;
+  if (typeof ttl !== "number" || !Number.isInteger(ttl) || ttl < 0)
+    throw new RangeError("task.ttl must be a non-negative integer or null");
+}
+
 function taskIdOf(request: unknown): string {
   const taskId = paramsOf(request).taskId;
   if (typeof taskId !== "string")
@@ -328,6 +352,7 @@ export function bindTaskReceiver(
       method,
       (raw) => {
         expire();
+        validateTaskAugmentation(raw);
         const params = paramsOf(raw);
         if (tasks.size >= maxTasks)
           throw new Error(
@@ -439,15 +464,11 @@ export function bindTaskReceiver(
   install("tasks/get", (request) =>
     Promise.resolve(snapshot(get(taskIdOf(request)))),
   );
-  install("tasks/result", async (request) => {
+  install("tasks/result", (request) => {
     const record = get(taskIdOf(request));
-    if (
-      record.task.status === "working" ||
-      record.task.status === "input_required"
-    )
-      throw new Error("Task is not terminal");
-    if (record.task.status === "cancelled")
-      throw new Error("Task was cancelled");
+    // Returning the still-pending promise blocks the response until the task
+    // settles, because tasks/result is a blocking call per 2025-11-25; the
+    // promise already rejects on failure, cancellation, expiry, and close.
     return record.result;
   });
   install("tasks/cancel", (request) => {

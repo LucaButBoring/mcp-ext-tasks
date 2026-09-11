@@ -902,4 +902,26 @@ describe("V2 runtime wire contracts", () => {
     ).toBe(true);
     expect(hasTaskServerCapabilityV2({ extensions: {} })).toBe(false);
   });
+
+  it("merges the tasks capability into existing client capabilities", () => {
+    const wire = withTaskCapabilityV2({
+      _meta: {
+        "io.modelcontextprotocol/clientCapabilities": {
+          sampling: {},
+          extensions: { "example.com/other": { enabled: true } },
+        },
+      },
+    });
+    expect(wire).toEqual({
+      _meta: {
+        "io.modelcontextprotocol/clientCapabilities": {
+          sampling: {},
+          extensions: {
+            "example.com/other": { enabled: true },
+            "io.modelcontextprotocol/tasks": {},
+          },
+        },
+      },
+    });
+  });
 });

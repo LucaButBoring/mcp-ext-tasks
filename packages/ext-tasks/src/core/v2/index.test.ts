@@ -291,7 +291,30 @@ describe("V2 runtime wire contracts", () => {
                 "cancel" as const,
               ),
             }),
-            fc.record({ roots: fc.array(fc.jsonValue()) }),
+            fc.record(
+              {
+                action: fc.constant("accept" as const),
+                content: fc.dictionary(
+                  fc.string(),
+                  fc.oneof(
+                    fc.string(),
+                    fc.integer(),
+                    fc.boolean(),
+                    fc.array(fc.string()),
+                  ),
+                ),
+              },
+              { requiredKeys: ["action"] },
+            ),
+            // Roots require a string uri; extra fields ride along openly.
+            fc.record({
+              roots: fc.array(
+                fc.record(
+                  { uri: fc.string(), name: fc.string() },
+                  { requiredKeys: ["uri"] },
+                ),
+              ),
+            }),
             fc.record({
               content: fc.oneof(
                 fc.record({
@@ -318,6 +341,19 @@ describe("V2 runtime wire contracts", () => {
       ),
     );
     expect(InputResponsesV2Schema.safeParse({ key: {} }).success).toBe(false);
+    // A root without a string uri is rejected rather than forwarded.
+    expect(
+      InputResponsesV2Schema.safeParse({ key: { roots: [null] } }).success,
+    ).toBe(false);
+    expect(
+      InputResponsesV2Schema.safeParse({ key: { roots: [{}] } }).success,
+    ).toBe(false);
+    // Elicitation content values outside the scalar/string-array union fail.
+    expect(
+      InputResponsesV2Schema.safeParse({
+        key: { action: "accept", content: { nested: { object: true } } },
+      }).success,
+    ).toBe(false);
   });
 
   it("decodes complete JSON-RPC errors", () => {

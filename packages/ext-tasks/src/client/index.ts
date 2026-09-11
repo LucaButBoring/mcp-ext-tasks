@@ -21,12 +21,14 @@ export {
 export { withRelatedTaskMetadata } from "./api.js";
 export type {
   ApplicationCreateMessageResult,
+  ApplicationElicitContentValue,
   ApplicationElicitResult,
   ApplicationInputHandler,
   ApplicationInputCallbacks,
   ApplicationInputRequest,
   ApplicationInputResult,
   ApplicationListRootsResult,
+  ApplicationRoot,
   InputCorrelationCandidate,
   InputCorrelationFailureReason,
   ResolvedInputExchangeContext,

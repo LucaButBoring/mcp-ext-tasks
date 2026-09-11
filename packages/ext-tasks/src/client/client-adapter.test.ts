@@ -19,6 +19,7 @@ import type {
   CreateTaskSessionFromClientOptions,
 } from "./sdk-client-adapter.js";
 import { ClientSessionPort } from "./sdk-client-adapter.js";
+import { projectTool, projectToolForGeneration } from "./internal.js";
 
 const client = () => new Client({ name: "test", version: "1" });
 const context = {
@@ -722,7 +723,8 @@ describe("Client adapter", () => {
       },
       vendorFlag: { enabled: true },
     };
-    expect(toolDeclarationFromMcpTool(extendedTool)).toEqual({
+    const declaration = toolDeclarationFromMcpTool(extendedTool);
+    expect(declaration).toEqual({
       name: "search",
       inputSchema: {
         type: "object",
@@ -733,6 +735,23 @@ describe("Client adapter", () => {
       executionExtensions: { vendorExecution: { queue: "batch" } },
       extensions: { vendorFlag: { enabled: true } },
     });
+    // Vendor execution data round-trips: V1 wire projection rebuilds the
+    // `execution` object from executionExtensions plus taskSupport, and
+    // re-decoding the projected tool retains it again.
+    const projected = projectToolForGeneration(declaration, "v1");
+    expect(projected.execution).toEqual({
+      vendorExecution: { queue: "batch" },
+      taskSupport: "required",
+    });
+    const redecoded = projectTool(projected);
+    expect(redecoded.taskSupport).toBe("required");
+    expect(redecoded.executionExtensions).toEqual({
+      vendorExecution: { queue: "batch" },
+    });
+    // V2 wire projection carries no execution member at all.
+    expect("execution" in projectToolForGeneration(declaration, "v2")).toBe(
+      false,
+    );
     expect(() =>
       toolDeclarationFromMcpTool({ name: "bad", inputSchema: true } as never),
     ).toThrow(/inputSchema must be a JSON object/);

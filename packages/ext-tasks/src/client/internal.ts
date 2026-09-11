@@ -119,17 +119,29 @@ export function projectTask(snapshot: InternalTaskSnapshot): TaskView {
 /** Projects a generated tool declaration to the neutral declaration shape. */
 export function projectTool(tool: ToolV1 | ToolV2): ToolDeclaration {
   const raw = jsonRecord(tool);
-  const taskSupport =
+  const execution =
     "execution" in tool &&
     tool.execution !== undefined &&
     tool.execution !== null &&
     typeof tool.execution === "object" &&
-    "taskSupport" in tool.execution &&
-    (tool.execution.taskSupport === "forbidden" ||
-      tool.execution.taskSupport === "optional" ||
-      tool.execution.taskSupport === "required")
-      ? tool.execution.taskSupport
+    !Array.isArray(tool.execution)
+      ? (tool.execution as Readonly<Record<string, JsonValue>>)
       : undefined;
+  const taskSupport =
+    execution !== undefined &&
+    (execution.taskSupport === "forbidden" ||
+      execution.taskSupport === "optional" ||
+      execution.taskSupport === "required")
+      ? execution.taskSupport
+      : undefined;
+  // Retain non-taskSupport execution fields because the neutral declaration
+  // promises them back for inspection and projection (executionExtensions).
+  const executionExtensions =
+    execution === undefined
+      ? undefined
+      : Object.fromEntries(
+          Object.entries(execution).filter(([key]) => key !== "taskSupport"),
+        );
   const known = new Set([
     "name",
     "title",
@@ -157,6 +169,10 @@ export function projectTool(tool: ToolV1 | ToolV2): ToolDeclaration {
     ...(tool.icons === undefined ? {} : { icons: tool.icons }),
     ...(tool._meta === undefined ? {} : { metadata: tool._meta }),
     ...(taskSupport === undefined ? {} : { taskSupport }),
+    ...(executionExtensions === undefined ||
+    Object.keys(executionExtensions).length === 0
+      ? {}
+      : { executionExtensions }),
     extensions: Object.fromEntries(
       Object.entries(raw).filter(([key]) => !known.has(key)),
     ),
@@ -200,12 +216,19 @@ export function projectToolForGeneration(
       ? {}
       : { _meta: declaration.metadata }),
   };
+  // Rebuild `execution` from executionExtensions plus taskSupport because the
+  // neutral declaration retains vendor execution data for round-tripping;
+  // taskSupport is spread last so the recognized field wins a key collision.
+  const execution = {
+    ...declaration.executionExtensions,
+    ...(declaration.taskSupport === undefined
+      ? {}
+      : { taskSupport: declaration.taskSupport }),
+  };
   return generation === "v1"
     ? {
         ...common,
-        ...(declaration.taskSupport === undefined
-          ? {}
-          : { execution: { taskSupport: declaration.taskSupport } }),
+        ...(Object.keys(execution).length === 0 ? {} : { execution }),
       }
     : common;
 }

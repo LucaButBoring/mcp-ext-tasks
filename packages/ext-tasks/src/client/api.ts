@@ -159,9 +159,17 @@ export type ApplicationInputRequest =
       readonly params?: Readonly<Record<string, JsonValue>>;
     };
 
+/**
+ * Elicitation form values are limited to scalars and string arrays because
+ * that is the wire shape (`ElicitResult.content`); a wider type would let
+ * type-correct handlers fail only at response encoding.
+ */
+export type ApplicationElicitContentValue =
+  string | number | boolean | readonly string[];
+
 export interface ApplicationElicitResult {
   readonly action: "accept" | "decline" | "cancel";
-  readonly content?: Readonly<Record<string, JsonValue>>;
+  readonly content?: Readonly<Record<string, ApplicationElicitContentValue>>;
 }
 
 export type ApplicationCreateMessageResult = Readonly<
@@ -172,8 +180,18 @@ export type ApplicationCreateMessageResult = Readonly<
   readonly content: JsonValue;
 };
 
+/**
+ * A root requires a string `uri` because the protocol does (`Root`); typing
+ * it as an arbitrary record would accept `{ roots: [{}] }` at compile time.
+ */
+export interface ApplicationRoot {
+  readonly uri: string;
+  readonly name?: string;
+  readonly _meta?: Readonly<Record<string, JsonValue>>;
+}
+
 export interface ApplicationListRootsResult {
-  readonly roots: readonly Readonly<Record<string, JsonValue>>[];
+  readonly roots: readonly ApplicationRoot[];
 }
 
 export type ApplicationInputResult<TRequest extends ApplicationInputRequest> =

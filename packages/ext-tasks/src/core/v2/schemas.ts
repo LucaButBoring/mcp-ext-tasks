@@ -251,11 +251,29 @@ const CreateMessageResultV2Schema = openObject({
   role: z.enum(["user", "assistant"]),
   stopReason: z.string().optional(),
 });
-const ListRootsResultV2Schema = openObject({
-  roots: z.array(JsonValueSchema),
+// Roots require a string `uri` (file:// for now) with optional `name`/_meta;
+// accepting arbitrary JSON here would let invalid handler output reach
+// `tasks/update` (pinned schema 2026-07-28 `Root`).
+const RootV2Schema = openObject({
+  uri: z.string(),
+  name: z.string().optional(),
+  _meta: MetaSchema.optional(),
 });
+const ListRootsResultV2Schema = openObject({
+  roots: z.array(RootV2Schema),
+});
+// Elicitation form values are limited to scalars and string arrays (pinned
+// schema 2026-07-28 `ElicitResult.content`); an open record would forward
+// arbitrary JSON to `tasks/update`.
+const ElicitContentValueV2Schema = z.union([
+  z.string(),
+  z.int(),
+  z.boolean(),
+  z.array(z.string()),
+]);
 const ElicitResultV2Schema = openObject({
   action: z.enum(["accept", "decline", "cancel"]),
+  content: z.record(z.string(), ElicitContentValueV2Schema).optional(),
 });
 // Response shapes overlap, so this union is intentionally non-discriminated.
 const InputResponseUnionV2Schema = z.union([

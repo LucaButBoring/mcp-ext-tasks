@@ -47,6 +47,11 @@ describe("core runtime contracts", () => {
   it("rejects exotic, cyclic, sparse, and non-finite values", () => {
     const sparse: unknown[] = [];
     sparse.length = 1;
+    // A hole plus an enumerable extra key keeps length === key count while
+    // every() skips the hole; the index-ownership check must still reject it.
+    const disguisedSparse: unknown[] = [];
+    disguisedSparse.length = 1;
+    (disguisedSparse as unknown[] & { extra?: string }).extra = "x";
     const cyclic: Record<string, unknown> = {};
     cyclic.self = cyclic;
     class Exotic {
@@ -63,6 +68,7 @@ describe("core runtime contracts", () => {
       new Date(),
       new Map(),
       sparse,
+      disguisedSparse,
       cyclic,
       new Exotic(),
       Object.create({ inherited: true }) as object,

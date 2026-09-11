@@ -161,7 +161,11 @@ export function isJsonValue(value: unknown): value is JsonValue {
     if (visiting.has(candidate)) return false;
     visiting.add(candidate);
     const valid = Array.isArray(candidate)
-      ? candidate.length === Object.keys(candidate).length &&
+      ? // Check every index is an own property because a hole plus an
+        // enumerable extra key keeps the key count equal while `every()`
+        // skips the hole — serialization would then change the value.
+        candidate.length === Object.keys(candidate).length &&
+        Array.from(candidate.keys()).every((index) => index in candidate) &&
         candidate.every(visit)
       : isJsonObject(candidate, visit);
     visiting.delete(candidate);

@@ -497,6 +497,10 @@ export interface TaskRecoveryOptions<TResult, TApplicationContext = void> {
   readonly signal?: AbortSignal;
   /** Execution-scoped declaration. Takes precedence over the session provider. */
   readonly declaration?: ToolDeclaration;
+  /** Additional headers for the initial lookup and every follow-up request. */
+  readonly headers?: Readonly<Record<string, string>>;
+  /** Per-request timeout in milliseconds for the lookup and follow-ups. */
+  readonly requestTimeoutMs?: number;
 }
 
 export interface TaskEnabledSession<TApplicationContext = void> {

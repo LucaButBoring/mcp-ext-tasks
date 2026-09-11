@@ -387,6 +387,88 @@ describe("task reference resumption", () => {
     );
   });
 
+  it("preserves recovery headers and request timeout on the lookup and every follow-up", async () => {
+    for (const generation of ["v1", "v2"] as const) {
+      const capabilities: SessionTaskCapabilities =
+        generation === "v1"
+          ? {
+              generation: "v1",
+              capabilities: {
+                requests: { tools: { call: {} } },
+                cancel: {},
+              },
+            }
+          : { generation: "v2", capabilities: {} };
+      const port = new FakePort(capabilities, "ctx-endpoint");
+      let getCalls = 0;
+      port.dispatchHandler = async (request) => {
+        await Promise.resolve();
+        const method = expectRecord(request).method;
+        if (method === "tasks/get") {
+          getCalls += 1;
+          const terminal = getCalls > 1;
+          return generation === "v1"
+            ? {
+                kind: "result",
+                result: asJson({
+                  taskId: "ctx-task",
+                  status: terminal ? "completed" : "working",
+                  createdAt: "a",
+                  lastUpdatedAt: terminal ? "b" : "a",
+                  ttl: null,
+                  pollInterval: 0,
+                }),
+              }
+            : {
+                kind: "result",
+                result: asJson({
+                  resultType: "complete",
+                  taskId: "ctx-task",
+                  status: terminal ? "completed" : "working",
+                  createdAt: "a",
+                  lastUpdatedAt: terminal ? "b" : "a",
+                  ttlMs: null,
+                  pollIntervalMs: 0,
+                  ...(terminal
+                    ? { result: { resultType: "complete", content: [] } }
+                    : {}),
+                }),
+              };
+        }
+        if (method === "tasks/result")
+          return { kind: "result", result: asJson({ content: [] }) };
+        throw new Error(`unexpected method ${formatJson(method)}`);
+      };
+      const session = withTasks(port, {
+        tools: { currentTool: () => undefined },
+      });
+      const resumed = await session.resumeTask(
+        {
+          endpointId: "ctx-endpoint",
+          generation,
+          taskId: "ctx-task" as TaskId,
+          originalOperation: "tools/call",
+        },
+        {
+          headers: { authorization: "Bearer resumed" },
+          requestTimeoutMs: 5_000,
+        },
+      );
+      await expect(resumed.result()).resolves.toMatchObject({
+        status: "completed",
+      });
+      expect(port.dispatchOptions.length).toBeGreaterThanOrEqual(2);
+      // toMatchObject because the V1 rpc adds its mandatory Mcp-Name header
+      // on top of the preserved recovery headers.
+      for (const dispatchOptions of port.dispatchOptions)
+        expect(dispatchOptions?.context).toMatchObject({
+          headers: { authorization: "Bearer resumed" },
+          requestTimeoutMs: 5_000,
+        });
+      await session.close();
+    }
+  });
+
   it("retries the initial resumed observation only for retryable DispatchError", async () => {
     await fc.assert(
       fc.asyncProperty(fc.boolean(), async (retryable) => {

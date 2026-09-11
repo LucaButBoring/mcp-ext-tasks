@@ -16,6 +16,7 @@ import type {
   TaskResultOptions,
 } from "./api.js";
 import {
+  DEFAULT_TASK_POLL_INTERVAL_MS,
   defaultResultCodec,
   taskPollInterval,
   terminalStatus,
@@ -109,8 +110,34 @@ export function createTaskController(
     ) {
       const codec = selectResultCodec(generation, resultOptions.resultCodec);
       return runOperation(resultOptions.signal, async (operationSignal) => {
-        if (rpc.generation === "v1")
-          return completedOutcome(rpc.result(codec, operationSignal));
+        if (rpc.generation === "v1") {
+          // Poll to a terminal state before touching tasks/result, because a
+          // V1 server errors on any non-completed task — calling it directly
+          // would turn a cancelled task into a failed outcome.
+          let task = await rpc.get(operationSignal);
+          while (!terminalStatus(task.status)) {
+            await waitForTaskPoll(
+              Math.max(
+                DEFAULT_TASK_POLL_INTERVAL_MS,
+                task.pollInterval ?? DEFAULT_TASK_POLL_INTERVAL_MS,
+              ),
+              operationSignal,
+            );
+            task = await rpc.get(operationSignal);
+          }
+          const view = projectTask({ generation: "v1", task });
+          const terminalTask = task;
+          return completedOutcome(
+            Promise.resolve().then(() => {
+              if (terminalTask.status === "cancelled")
+                throw new TaskCancelledError();
+              if (terminalTask.status === "failed")
+                throw new Error(terminalTask.statusMessage ?? "Task failed");
+              return rpc.result(codec, operationSignal);
+            }),
+            view,
+          );
+        }
 
         let task: DetailedTaskV2 = await rpc.get(operationSignal);
         while (!terminalStatus(task.status)) {

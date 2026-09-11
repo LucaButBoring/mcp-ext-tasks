@@ -294,6 +294,60 @@ describe("task lifecycle and races", () => {
     );
   });
 
+  it("keeps the caller's signal bounding the task after callTool returns", async () => {
+    const port = new FakePort({ generation: "v2", capabilities: {} });
+    port.dispatchHandler = async (request, options) => {
+      const record = expectRecord(request);
+      if (record.method === "tools/call")
+        return {
+          kind: "result",
+          result: asJson({
+            resultType: "task",
+            taskId: "caller-signal",
+            status: "working",
+            createdAt: "a",
+            lastUpdatedAt: "a",
+            ttlMs: null,
+          }),
+        };
+      if (record.method === "tasks/get")
+        return new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener(
+            "abort",
+            () => {
+              reject(asError(options.signal?.reason));
+            },
+            { once: true },
+          );
+        });
+      throw new Error(`unexpected method ${formatJson(record.method)}`);
+    };
+    const session = withTasks(port, {
+      tools: {
+        currentTool: () =>
+          toolDeclaration({ name: "x", inputSchema: { type: "object" } }),
+      },
+    });
+    const caller = new AbortController();
+    const execution = await session.callTool(
+      "x",
+      {},
+      {
+        signal: caller.signal,
+      },
+    );
+    const reason = new Error("caller stopped");
+    // Aborting after callTool resolved must still end the task's local
+    // lifecycle — the documented contract is that the signal bounds the
+    // whole operation, not only the initiating call.
+    caller.abort(reason);
+    const outcome = await execution.result();
+    expect(outcome.status).toBe("failed");
+    if (outcome.status !== "failed") throw new Error("expected failed");
+    expect(outcome.error.cause).toBe(reason);
+    await session.close();
+  });
+
   it("retries task observations only for retryable DispatchError", async () => {
     await fc.assert(
       fc.asyncProperty(fc.boolean(), async (retryable) => {

@@ -117,7 +117,7 @@ const { outcome } = await recovered.settle({
 
 The recovered execution exposes the same progress, input, and settlement APIs as a fresh call.
 
-If the result uses a custom runtime codec, pass the same codec to `resumeTask()` that you used for the original call. See [Adapters and schemas](../adapters-and-schemas.md).
+If the result uses a custom runtime codec, pass the same codec to `resumeTask()` that you used for the original call. See [Adapters and schemas](../adapters-and-schemas.md). The same applies to per-request wire context: pass the original call's `headers` and `requestTimeoutMs` so the initial lookup and every follow-up keep their authentication and timeout.
 
 ## Work with a known task ID
 

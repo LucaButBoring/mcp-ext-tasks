@@ -66,6 +66,8 @@ describe("manual task controller", () => {
     await expect(controller.cancel()).resolves.toBeUndefined();
     expect(methods(port)).toEqual([
       "tasks/get",
+      // result() now polls tasks/get to a terminal state before tasks/result.
+      "tasks/get",
       "tasks/result",
       "tasks/cancel",
     ]);
@@ -222,7 +224,15 @@ describe("manual task controller", () => {
       generation: "v1",
       capabilities: { requests: { tools: { call: {} } } },
     });
-    port.response = { kind: "result", result: { custom: "v1" } };
+    port.dispatchHandler = (request) =>
+      Promise.resolve(
+        expectRecord(request).method === "tasks/get"
+          ? {
+              kind: "result",
+              result: asJson({ ...v1Task, taskId: "custom-v1" }),
+            }
+          : { kind: "result", result: { custom: "v1" } },
+      );
     const session = withTasks(port, { tools });
 
     await expect(
@@ -234,7 +244,7 @@ describe("manual task controller", () => {
           }),
         },
       }),
-    ).resolves.toEqual({ status: "completed", result: "v1" });
+    ).resolves.toMatchObject({ status: "completed", result: "v1" });
     await session.close();
   });
 
@@ -272,17 +282,27 @@ describe("manual task controller", () => {
               capabilities: { requests: { tools: { call: {} } } },
             })
           : new FakePort({ generation, capabilities: {} });
-      port.response =
-        generation === "v1"
-          ? { kind: "result", result: { custom: generation } }
-          : {
-              kind: "result",
-              result: asJson({
-                ...v2CompletedTask,
-                taskId: `failing-${generation}`,
-                result: { custom: generation },
-              }),
-            };
+      // The V1 result path polls tasks/get first, so its fake must answer
+      // both methods; V2 answers everything with the terminal snapshot.
+      if (generation === "v1")
+        port.dispatchHandler = (request) =>
+          Promise.resolve(
+            expectRecord(request).method === "tasks/get"
+              ? {
+                  kind: "result",
+                  result: asJson({ ...v1Task, taskId: "failing-v1" }),
+                }
+              : { kind: "result", result: { custom: generation } },
+          );
+      else
+        port.response = {
+          kind: "result",
+          result: asJson({
+            ...v2CompletedTask,
+            taskId: `failing-${generation}`,
+            result: { custom: generation },
+          }),
+        };
       const codecError = new ProtocolDecodeError(`${generation} codec failed`);
       const session = withTasks(port, { tools });
 
@@ -405,6 +425,44 @@ describe("manual task controller", () => {
         expect(outcome.status).toBe("cancelled");
         const legacy = legacyResult(session.task(taskId(terminal.status)));
         await expect(legacy).rejects.toBeInstanceOf(TaskCancelledError);
+      }
+      await session.close();
+    }
+  });
+
+  it("surfaces cancelled and failed V1 tasks without calling tasks/result", async () => {
+    for (const terminal of [
+      { status: "cancelled" },
+      { status: "failed", statusMessage: "boom" },
+    ] as const) {
+      const port = new FakePort({
+        generation: "v1",
+        capabilities: { requests: { tools: { call: {} } } },
+      });
+      port.dispatchHandler = (request) => {
+        const method = expectRecord(request).method;
+        // A V1 server errors on tasks/result for any non-completed task —
+        // reaching it from this test would prove the classification wrong.
+        if (method === "tasks/result")
+          throw new Error("tasks/result must not be called");
+        return Promise.resolve({
+          kind: "result",
+          result: asJson({ ...v1Task, taskId: "terminal-v1", ...terminal }),
+        });
+      };
+      const session = withTasks(port, { tools });
+      const outcome = await session.task(taskId("terminal-v1")).result();
+      if (terminal.status === "cancelled") {
+        expect(outcome).toMatchObject({
+          status: "cancelled",
+          task: { taskId: "terminal-v1", status: "cancelled" },
+        });
+      } else {
+        expect(outcome).toMatchObject({
+          status: "failed",
+          error: { message: "boom" },
+          task: { taskId: "terminal-v1", status: "failed" },
+        });
       }
       await session.close();
     }

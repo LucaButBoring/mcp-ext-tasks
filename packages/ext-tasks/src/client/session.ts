@@ -426,105 +426,133 @@ class PortTaskEnabledSession<
           callAsTaskV1,
           dispatchContext,
         );
+      callLifecycle.dispose();
       throw error;
     } finally {
       this.ordinaryInputCandidates.delete(executionId);
-      callLifecycle.dispose();
     }
     const wireResult = responseResult(response);
     const codec = selectResultCodec(generation, options.resultCodec);
-
-    if (generation === "v1" && callAsTaskV1) {
-      const created = parseResult(CreateTaskResultV1Schema, wireResult);
-      const handle: InternalTaskHandle & { readonly generation: "v1" } = {
-        generation: "v1",
-        taskId: created.task.taskId as TaskId,
-        originalOperation: "tools/call",
-      };
-      const releaseTaskIdentity = this.acquireTaskIdentity(handle);
-      const execution = createTaskExecutionV1({
-        applicationContext: options.applicationContext as TApplicationContext,
-        handle,
-        declaration,
-        initialTask: created.task,
-        resultCodec: codec,
-        port: this.port,
-        dispatchContext,
-        lifecycleSignal: this.lifecycleController.signal,
+    // Task-backed executions receive the linked call lifecycle and dispose it
+    // only once they settle, because options.signal documents that it bounds
+    // the operation's local lifecycle — disposing here would disconnect it
+    // the moment tools/call returns. Immediate and error paths dispose now.
+    // The flag is set at the call sites rather than inside the helper so the
+    // finally's check reads an assignment flow analysis can see.
+    let lifecycleTransferred = false;
+    const transferLifecycle = (
+      execution: TaskExecution<TResult, TApplicationContext>,
+    ): void => {
+      void execution.result().finally(() => {
+        callLifecycle.dispose();
       });
-      return this.trackTaskExecution(
-        execution,
-        {
-          lifetime: "task-v1",
+    };
+    try {
+      if (generation === "v1" && callAsTaskV1) {
+        const created = parseResult(CreateTaskResultV1Schema, wireResult);
+        const handle: InternalTaskHandle & { readonly generation: "v1" } = {
           generation: "v1",
           taskId: created.task.taskId as TaskId,
-          toolName: name,
-          executionId,
+          originalOperation: "tools/call",
+        };
+        const releaseTaskIdentity = this.acquireTaskIdentity(handle);
+        const execution = createTaskExecutionV1({
           applicationContext: options.applicationContext as TApplicationContext,
-          signal: execution.inputSignal(),
-        },
-        releaseTaskIdentity,
-      );
-    }
-
-    if (
-      generation === "v2" &&
-      preference === "require" &&
-      !isCreateTaskResultV2(wireResult)
-    )
-      throw new Error(
-        "Task execution was required but the server returned an immediate result",
-      );
-    if (
-      generation === "v2" &&
-      preference === "forbid" &&
-      isCreateTaskResultV2(wireResult)
-    ) {
-      this.cleanupLateTaskCreation(
-        response,
-        generation,
-        false,
-        dispatchContext,
-      );
-      throw new Error(
-        "Task execution was forbidden but the server returned a task",
-      );
-    }
-
-    if (generation === "v2" && isCreateTaskResultV2(wireResult)) {
-      const created = parseResult(CreateTaskResultV2Schema, wireResult);
-      const handle: InternalTaskHandle & { readonly generation: "v2" } = {
-        generation: "v2",
-        taskId: created.taskId as TaskId,
-        originalOperation: "tools/call",
-      };
-      const releaseTaskIdentity = this.acquireTaskIdentity(handle);
-      return this.trackTaskExecution(
-        createTaskExecutionV2({
-          applicationContext: options.applicationContext as TApplicationContext,
-          declaration,
           handle,
-          initialTask: created,
+          declaration,
+          initialTask: created.task,
           resultCodec: codec,
           port: this.port,
           dispatchContext,
-          lifecycleSignal: this.lifecycleController.signal,
-          onInputRequest: this.options.onInputRequest,
-          reportError: (error) => {
-            this.reportBackgroundError(error);
+          // callSignal, not the bare session signal: it already links the
+          // session lifecycle with options.signal, keeping the caller's abort
+          // effective for the task's whole local lifetime.
+          lifecycleSignal: callSignal,
+        });
+        const tracked = this.trackTaskExecution(
+          execution,
+          {
+            lifetime: "task-v1",
+            generation: "v1",
+            taskId: created.task.taskId as TaskId,
+            toolName: name,
+            executionId,
+            applicationContext:
+              options.applicationContext as TApplicationContext,
+            signal: execution.inputSignal(),
           },
-        }),
-        undefined,
-        releaseTaskIdentity,
-      );
-    }
+          releaseTaskIdentity,
+        );
+        lifecycleTransferred = true;
+        transferLifecycle(tracked);
+        return tracked;
+      }
 
-    const resultPromise = Promise.resolve(parseResult(codec, wireResult));
-    return new ImmediateExecution(
-      options.applicationContext as TApplicationContext,
-      resultPromise,
-      declaration,
-    );
+      if (
+        generation === "v2" &&
+        preference === "require" &&
+        !isCreateTaskResultV2(wireResult)
+      )
+        throw new Error(
+          "Task execution was required but the server returned an immediate result",
+        );
+      if (
+        generation === "v2" &&
+        preference === "forbid" &&
+        isCreateTaskResultV2(wireResult)
+      ) {
+        this.cleanupLateTaskCreation(
+          response,
+          generation,
+          false,
+          dispatchContext,
+        );
+        throw new Error(
+          "Task execution was forbidden but the server returned a task",
+        );
+      }
+
+      if (generation === "v2" && isCreateTaskResultV2(wireResult)) {
+        const created = parseResult(CreateTaskResultV2Schema, wireResult);
+        const handle: InternalTaskHandle & { readonly generation: "v2" } = {
+          generation: "v2",
+          taskId: created.taskId as TaskId,
+          originalOperation: "tools/call",
+        };
+        const releaseTaskIdentity = this.acquireTaskIdentity(handle);
+        const tracked = this.trackTaskExecution(
+          createTaskExecutionV2({
+            applicationContext:
+              options.applicationContext as TApplicationContext,
+            declaration,
+            handle,
+            initialTask: created,
+            resultCodec: codec,
+            port: this.port,
+            dispatchContext,
+            lifecycleSignal: callSignal,
+            onInputRequest: this.options.onInputRequest,
+            reportError: (error) => {
+              this.reportBackgroundError(error);
+            },
+          }),
+          undefined,
+          releaseTaskIdentity,
+        );
+        lifecycleTransferred = true;
+        transferLifecycle(tracked);
+        return tracked;
+      }
+
+      const resultPromise = Promise.resolve(parseResult(codec, wireResult));
+      return new ImmediateExecution(
+        options.applicationContext as TApplicationContext,
+        resultPromise,
+        declaration,
+      );
+    } finally {
+      if (!lifecycleTransferred) callLifecycle.dispose();
+    }
   }
 
   async resumeTask<TResult = CallToolResultV1 | CallToolResultV2>(
@@ -560,6 +588,16 @@ class PortTaskEnabledSession<
     const resumeSignal = resumeLifecycle.signal;
     const executionId = nextExecutionIdentifier();
     const codec = selectResultCodec(reference.generation, options.resultCodec);
+    // The same wire context as callTool, because a task resumed without its
+    // original headers/timeout would silently drop per-request authentication
+    // on every follow-up.
+    const dispatchContext =
+      options.headers === undefined && options.requestTimeoutMs === undefined
+        ? undefined
+        : {
+            headers: options.headers,
+            requestTimeoutMs: options.requestTimeoutMs,
+          };
     try {
       throwIfAborted(resumeSignal);
       this.assertUsable();
@@ -572,6 +610,7 @@ class PortTaskEnabledSession<
             : await createTaskRpc(reference.generation, {
                 port: this.port,
                 taskId: reference.taskId,
+                context: dispatchContext,
               }).get(resumeSignal);
         this.assertUsable();
         throwIfAborted(resumeSignal);
@@ -582,6 +621,7 @@ class PortTaskEnabledSession<
           initialTask: task,
           resultCodec: codec,
           port: this.port,
+          dispatchContext,
           lifecycleSignal: this.lifecycleController.signal,
         });
         const tracked = this.trackTaskExecution(
@@ -615,6 +655,7 @@ class PortTaskEnabledSession<
           ? await createTaskRpc(reference.generation, {
               port: this.port,
               taskId: reference.taskId,
+              context: dispatchContext,
             }).get(resumeSignal)
           : seededDetailedTask;
       const task = seededTask ?? detailedTask;
@@ -630,6 +671,7 @@ class PortTaskEnabledSession<
         initialDetailedTask: detailedTask,
         resultCodec: codec,
         port: this.port,
+        dispatchContext,
         lifecycleSignal: this.lifecycleController.signal,
         onInputRequest: this.options.onInputRequest,
         reportError: (error) => {

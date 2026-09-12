@@ -237,7 +237,14 @@ export function bindTaskReceiver(
   let closed = false;
 
   const report = (error: unknown, context: TaskReceiverErrorContext): void => {
-    options.onError?.(error, context);
+    // The sink call is guarded because report() runs inside detached
+    // rejection handlers, where a throwing consumer onError would surface
+    // as an unhandled rejection instead of a diagnostic.
+    try {
+      options.onError?.(error, context);
+    } catch (sinkError) {
+      console.error(sinkError);
+    }
   };
   const snapshot = (record: TaskRecord): TaskV1 => ({ ...record.task });
   const notify = (

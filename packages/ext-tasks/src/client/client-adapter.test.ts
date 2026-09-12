@@ -439,6 +439,41 @@ describe("Client adapter", () => {
     disposeError();
   });
 
+  it("delegates unhandled input requests to the prior fallback handler", async () => {
+    const sdk = client();
+    const prior = vi.fn().mockResolvedValue({ action: "decline" });
+    sdk.fallbackRequestHandler = prior;
+    const port = createSessionPortFromClient(sdk, "endpoint-prior");
+    port.onServerRequest(() => Promise.resolve(undefined));
+    const request = {
+      jsonrpc: "2.0",
+      id: 7,
+      method: "elicitation/create",
+      params: {},
+    } as const;
+    await expect(
+      // Non-optional call: the adapter installed its own handler, and the
+      // prior assignment above proves the field is defined.
+      sdk.fallbackRequestHandler(request, context),
+    ).resolves.toEqual({ action: "decline" });
+    expect(prior).toHaveBeenCalledWith(request, context);
+
+    // Without a prior handler, an unhandled input request settles with the
+    // conservative default: cancel for elicitations, an error otherwise.
+    const bare = client();
+    const barePort = createSessionPortFromClient(bare, "endpoint-bare");
+    barePort.onServerRequest(() => Promise.resolve(undefined));
+    await expect(
+      bare.fallbackRequestHandler?.(request, context),
+    ).resolves.toEqual({ action: "cancel" });
+    await expect(
+      bare.fallbackRequestHandler?.(
+        { jsonrpc: "2.0", id: 8, method: "roots/list", params: {} },
+        context,
+      ),
+    ).rejects.toMatchObject({ code: -32603 });
+  });
+
   it("preserves SDK input handlers alongside the Tasks fallback", () => {
     class InspectableClient extends Client {
       requestHandler(method: string): unknown {

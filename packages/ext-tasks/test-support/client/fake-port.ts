@@ -7,6 +7,7 @@ import type {
   JsonRpcResponse,
   SessionTaskCapabilities,
 } from "../../src/client/index.js";
+import { defaultServerRequestResponse } from "../../src/client/input-routing.js";
 
 export const asJson = (value: unknown): JsonValue =>
   JSON.parse(JSON.stringify(value)) as JsonValue;
@@ -37,7 +38,7 @@ export class FakePort implements ConnectedMcpSessionPort {
   ) => Promise<JsonRpcResponse>;
   private requestHandler?: (
     incoming: IncomingServerRequest,
-  ) => Promise<JsonRpcResponse>;
+  ) => Promise<JsonRpcResponse | undefined>;
   private notificationListener?: (notification: JsonValue) => void;
   private invalidationListener?: (reason: unknown) => void;
   listenerDisposals = 0;
@@ -62,7 +63,9 @@ export class FakePort implements ConnectedMcpSessionPort {
   }
 
   onServerRequest(
-    handler: (incoming: IncomingServerRequest) => Promise<JsonRpcResponse>,
+    handler: (
+      incoming: IncomingServerRequest,
+    ) => Promise<JsonRpcResponse | undefined>,
   ): () => void {
     this.requestHandler = handler;
     return () => {
@@ -95,7 +98,13 @@ export class FakePort implements ConnectedMcpSessionPort {
   async serve(request: JsonValue): Promise<JsonRpcResponse> {
     if (this.requestHandler === undefined)
       throw new Error("request handler is not installed");
-    return this.requestHandler({ request, requestContext: {} });
+    // The fake port plays a host with no prior fallback handler, so an
+    // unhandled request settles with the same conservative default the SDK
+    // adapter applies (cancel elicitations, error everything else).
+    const response = await this.requestHandler({ request, requestContext: {} });
+    return (
+      response ?? defaultServerRequestResponse({ request, requestContext: {} })
+    );
   }
 
   notify(notification: JsonValue): void {

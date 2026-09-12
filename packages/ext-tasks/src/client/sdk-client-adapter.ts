@@ -5,6 +5,7 @@ import type { JsonValue } from "../core/index.js";
 import { toolDeclaration } from "./api.js";
 import type { TaskEnabledSession, WithTasksOptions } from "./api.js";
 import { withOwnedTasks } from "./session.js";
+import { defaultServerRequestResponse } from "./input-routing.js";
 import type { DispatchOptions, SessionTaskCapabilities } from "./port.js";
 import { DispatchError } from "./port.js";
 import type {
@@ -272,7 +273,7 @@ const adaptedClients = new WeakSet();
 export class ClientSessionPort implements ConnectedMcpSessionPort {
   readonly taskCapabilities: SessionTaskCapabilities;
   private readonly serverRequestListeners = new Set<
-    (incoming: IncomingServerRequest) => Promise<JsonRpcResponse>
+    (incoming: IncomingServerRequest) => Promise<JsonRpcResponse | undefined>
   >();
   private readonly notificationListeners = new Set<
     (notification: JsonValue) => void
@@ -302,6 +303,25 @@ export class ClientSessionPort implements ConnectedMcpSessionPort {
     if (!isJsonValue(request))
       throw new ProtocolError(-32600, "Inbound request is not JSON");
     const response = await listener({ request, requestContext: context });
+    // The listener leaves a request it cannot correlate unhandled, because
+    // the host's prior fallback handler may still be able to answer it.
+    if (response === undefined) {
+      if (this.previousFallbackRequestHandler !== undefined)
+        return this.previousFallbackRequestHandler(request, context);
+      const fallback = defaultServerRequestResponse({
+        request,
+        requestContext: context,
+      });
+      if (fallback.kind === "error")
+        throw new ProtocolError(
+          fallback.error.code,
+          fallback.error.message,
+          fallback.error.data,
+        );
+      if (!isJsonRecord(fallback.result))
+        throw new ProtocolError(-32603, "Internal error");
+      return fallback.result;
+    }
     if (response.kind === "error")
       throw new ProtocolError(
         response.error.code,
@@ -399,6 +419,11 @@ export class ClientSessionPort implements ConnectedMcpSessionPort {
           ...(options.context?.requestTimeoutMs === undefined
             ? {}
             : { timeout: options.context.requestTimeoutMs }),
+          ...(options.context?.resetTimeoutOnProgress === undefined
+            ? {}
+            : {
+                resetTimeoutOnProgress: options.context.resetTimeoutOnProgress,
+              }),
         },
       );
       return { kind: "result", result };
@@ -422,7 +447,9 @@ export class ClientSessionPort implements ConnectedMcpSessionPort {
   }
 
   onServerRequest(
-    handler: (incoming: IncomingServerRequest) => Promise<JsonRpcResponse>,
+    handler: (
+      incoming: IncomingServerRequest,
+    ) => Promise<JsonRpcResponse | undefined>,
   ): () => void {
     this.serverRequestListeners.add(handler);
     return () => this.serverRequestListeners.delete(handler);

@@ -354,6 +354,13 @@ describe("V2 runtime wire contracts", () => {
         key: { action: "accept", content: { nested: { object: true } } },
       }).success,
     ).toBe(false);
+    // Fractional numbers pass: a `NumberSchema` form field may be declared
+    // `type: "number"`, so a float is a valid submitted value.
+    expect(
+      InputResponsesV2Schema.safeParse({
+        key: { action: "accept", content: { temperature: 0.5 } },
+      }).success,
+    ).toBe(true);
   });
 
   it("decodes complete JSON-RPC errors", () => {

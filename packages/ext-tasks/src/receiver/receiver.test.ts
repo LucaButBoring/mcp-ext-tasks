@@ -370,6 +370,31 @@ describe("bindTaskReceiver", () => {
     });
   });
 
+  it("guards the error sink so a throwing onError cannot become an unhandled rejection", async () => {
+    const host = new Host();
+    const notification = deferred<undefined>();
+    host.notification.mockImplementationOnce(() => notification.promise);
+    // The sink failure is expected diagnostic output; keep it off the console.
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const sinkFailure = new Error("sink failed");
+    bindTaskReceiver(asClient(host), {
+      methods: { "sampling/createMessage": true },
+      sampling: () => Promise.resolve({ ok: true }),
+      createTaskId: () => "guarded-task",
+      onError: () => {
+        throw sinkFailure;
+      },
+    });
+    await host.call("sampling/createMessage");
+    await flush();
+    notification.reject(new Error("send failed"));
+    await flush();
+    expect(consoleError).toHaveBeenCalledWith(sinkFailure);
+    consoleError.mockRestore();
+  });
+
   it("expires from creation, aborts pending callbacks, rejects payloads, and removes tasks", async () => {
     vi.useFakeTimers();
     const host = new Host();

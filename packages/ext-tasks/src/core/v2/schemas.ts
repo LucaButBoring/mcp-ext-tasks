@@ -264,10 +264,12 @@ const ListRootsResultV2Schema = openObject({
 });
 // Elicitation form values are limited to scalars and string arrays (pinned
 // schema 2026-07-28 `ElicitResult.content`); an open record would forward
-// arbitrary JSON to `tasks/update`.
+// arbitrary JSON to `tasks/update`. `z.number()` rather than `z.int()`,
+// because a `NumberSchema` form field may be declared `type: "number"` and
+// its accepted value is then a float.
 const ElicitContentValueV2Schema = z.union([
   z.string(),
-  z.int(),
+  z.number(),
   z.boolean(),
   z.array(z.string()),
 ]);

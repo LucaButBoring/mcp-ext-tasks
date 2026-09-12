@@ -330,11 +330,14 @@ class PortTaskEnabledSession<
       requestParams.task =
         retentionMs === undefined ? {} : { ttl: retentionMs };
     const dispatchContext =
-      options.headers === undefined && options.requestTimeoutMs === undefined
+      options.headers === undefined &&
+      options.requestTimeoutMs === undefined &&
+      options.resetTimeoutOnProgress === undefined
         ? undefined
         : {
             headers: options.headers,
             requestTimeoutMs: options.requestTimeoutMs,
+            resetTimeoutOnProgress: options.resetTimeoutOnProgress,
           };
     const executionId = nextExecutionIdentifier();
     this.ordinaryInputCandidates.set(executionId, {
@@ -598,6 +601,17 @@ class PortTaskEnabledSession<
             headers: options.headers,
             requestTimeoutMs: options.requestTimeoutMs,
           };
+    // Like callTool, the linked lifecycle transfers to the resumed execution
+    // and is disposed when it settles, because options.signal bounds the
+    // recovered operation's local lifecycle — not just the initial lookup.
+    let lifecycleTransferred = false;
+    const transferLifecycle = (
+      execution: TaskExecution<TResult, TApplicationContext>,
+    ): void => {
+      void execution.result().finally(() => {
+        resumeLifecycle.dispose();
+      });
+    };
     try {
       throwIfAborted(resumeSignal);
       this.assertUsable();
@@ -622,7 +636,7 @@ class PortTaskEnabledSession<
           resultCodec: codec,
           port: this.port,
           dispatchContext,
-          lifecycleSignal: this.lifecycleController.signal,
+          lifecycleSignal: resumeSignal,
         });
         const tracked = this.trackTaskExecution(
           execution,
@@ -639,6 +653,8 @@ class PortTaskEnabledSession<
           releaseTaskIdentity,
         );
         taskIdentityTransferred = true;
+        lifecycleTransferred = true;
+        transferLifecycle(tracked);
         return tracked;
       }
 
@@ -672,7 +688,7 @@ class PortTaskEnabledSession<
         resultCodec: codec,
         port: this.port,
         dispatchContext,
-        lifecycleSignal: this.lifecycleController.signal,
+        lifecycleSignal: resumeSignal,
         onInputRequest: this.options.onInputRequest,
         reportError: (error) => {
           this.reportBackgroundError(error);
@@ -684,10 +700,12 @@ class PortTaskEnabledSession<
         releaseTaskIdentity,
       );
       taskIdentityTransferred = true;
+      lifecycleTransferred = true;
+      transferLifecycle(tracked);
       return tracked;
     } finally {
       if (!taskIdentityTransferred) releaseTaskIdentity();
-      resumeLifecycle.dispose();
+      if (!lifecycleTransferred) resumeLifecycle.dispose();
     }
   }
 
@@ -915,9 +933,12 @@ class PortTaskEnabledSession<
 
   private async handleServerRequest(
     incoming: IncomingServerRequest,
-  ): Promise<JsonRpcResponse> {
+  ): Promise<JsonRpcResponse | undefined> {
+    // Unhandled paths resolve undefined instead of a protocol response,
+    // because the port owner may hold a prior fallback handler that can
+    // still answer a request this session does not own.
     const request = projectApplicationInputRequest(incoming);
-    if (request === undefined) return defaultServerRequestResponse(incoming);
+    if (request === undefined) return undefined;
 
     const resolution = resolveInputCandidate(
       readRelatedTaskEvidence(request),
@@ -932,10 +953,9 @@ class PortTaskEnabledSession<
           resolution.reason,
         ),
       );
-      return defaultServerRequestResponse(incoming);
+      return undefined;
     }
-    if (this.options.onInputRequest === undefined)
-      return defaultServerRequestResponse(incoming);
+    if (this.options.onInputRequest === undefined) return undefined;
 
     try {
       const context = buildResolvedInputContext(resolution.candidate);

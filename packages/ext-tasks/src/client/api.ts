@@ -426,6 +426,8 @@ export interface ToolCallOptions<TResult, TApplicationContext = void> {
   readonly headers?: Readonly<Record<string, string>>;
   /** Per-request timeout in milliseconds for the initiating call and task follow-ups. */
   readonly requestTimeoutMs?: number;
+  /** Re-arms each request's timeout on correlated progress notifications. */
+  readonly resetTimeoutOnProgress?: boolean;
 }
 
 export interface TaskControllerOptions {

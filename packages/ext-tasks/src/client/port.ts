@@ -48,6 +48,8 @@ export interface DispatchContext {
   readonly headers?: Readonly<Record<string, string>>;
   /** Per-request timeout in milliseconds. */
   readonly requestTimeoutMs?: number;
+  /** Re-arms the request timeout whenever correlated progress arrives. */
+  readonly resetTimeoutOnProgress?: boolean;
 }
 
 /** Options for one port dispatch. */
@@ -65,7 +67,12 @@ export interface ConnectedMcpSessionPort {
     options?: DispatchOptions,
   ): Promise<JsonRpcResponse>;
   onServerRequest(
-    handler: (incoming: IncomingServerRequest) => Promise<JsonRpcResponse>,
+    // A handler resolves undefined to leave the request unhandled, because
+    // the port owner (e.g. the host's prior fallback handler) may still be
+    // able to answer an input request the task session cannot correlate.
+    handler: (
+      incoming: IncomingServerRequest,
+    ) => Promise<JsonRpcResponse | undefined>,
   ): () => void;
   onNotification(listener: (notification: JsonValue) => void): () => void;
   onInvalidated(listener: (reason: unknown) => void): () => void;

@@ -46,9 +46,15 @@ function clientTaskCapabilities(
 ): SessionTaskCapabilities {
   const capabilities = client.getServerCapabilities();
   if (client.getProtocolEra() === "modern") {
-    const extension =
+    // Typed as unknown because the SDK declares the extension value as an
+    // object, but a malformed server can still send null on the wire — the
+    // null check must survive type-level narrowing to guard Object.keys
+    // (mirroring hasTaskServerCapabilityV2) rather than throw during
+    // adapter creation.
+    const extension: unknown =
       capabilities?.extensions?.["io.modelcontextprotocol/tasks"];
     if (
+      extension !== null &&
       typeof extension === "object" &&
       !Array.isArray(extension) &&
       Object.keys(extension).length === 0

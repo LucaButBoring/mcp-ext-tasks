@@ -358,9 +358,13 @@ const completeOperationResultV2Schema = () =>
 const UpdateTaskResultV2Schema = completeOperationResultV2Schema();
 const CancelTaskResultV2Schema = completeOperationResultV2Schema();
 
+// The wrapper side is an open object because the pinned
+// TaskStatusNotificationParams is open to extension fields — a plain
+// z.object would strip every unknown top-level key during the intersection
+// before projectTask() could surface them as raw/extensions.
 const TaskStatusNotificationParamsV2Schema = z.intersection(
   DetailedTaskV2Schema,
-  z.object({ _meta: MetaSchema.optional() }),
+  openObject({ _meta: MetaSchema.optional() }),
 );
 const TaskStatusNotificationV2Schema = z.object({
   jsonrpc: z.literal("2.0"),

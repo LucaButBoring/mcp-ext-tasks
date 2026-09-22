@@ -19,11 +19,14 @@ import {
 
 ## Call a tool
 
-Create a session from a connected MCP SDK `Client`. The same call handles immediate results and durable task-backed execution.
+Create a session from a connected MCP SDK `Client`. The same call handles immediate results and durable task-backed execution. This minimal form works with legacy (2025-11-25) and Tasks-unaware servers; a 2026-07-28 Tasks server additionally requires `rawDispatch` and `v2RequestFraming` (see [Adapters and schemas](https://modelcontextprotocol.github.io/ext-tasks/typescript/adapters-and-schemas.html)) — without them, session creation throws.
 
 ```ts
 const session = createTaskSessionFromClient(client, {
   endpointId: "production-reports",
+  // Required for a 2026-07-28 Tasks server; omit for 2025-11-25 servers:
+  // rawDispatch: hostRequestCoordinator.dispatch,
+  // v2RequestFraming: { protocolVersion, clientInfo, clientCapabilities },
 });
 
 try {

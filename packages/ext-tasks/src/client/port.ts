@@ -94,7 +94,15 @@ export async function withAbort<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   if (signal === undefined) return promise;
-  throwIfAborted(signal);
+  if (signal.aborted) {
+    // The racing promise is held before throwing, because an already-aborted
+    // signal exits before Promise.race attaches to it — a later rejection
+    // (e.g. an observation aborted by the same signal) would otherwise be an
+    // unhandled rejection. The callee owns its failure surface: the caller
+    // gets the abort error thrown below.
+    void promise.catch(() => {});
+    throwIfAborted(signal);
+  }
   let onAbort: (() => void) | undefined;
   const aborted = new Promise<never>((_, reject) => {
     onAbort = () => {

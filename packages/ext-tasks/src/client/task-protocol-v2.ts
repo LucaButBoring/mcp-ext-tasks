@@ -173,9 +173,14 @@ async function driveTaskExecutionV2<TResult, TApplicationContext>(args: {
     await resolveTaskInput(latestDetailedTask);
 
   while (!terminalStatus(knownStatus)) {
+    // The creation-time hint applies only until the first detailed task is
+    // observed: a detailed snapshot is the current complete state, so a
+    // server that lowers or removes its hint is honored instead of being
+    // pinned to a stale larger interval forever.
     const delayMs = taskPollInterval(
-      latestDetailedTask?.pollIntervalMs,
-      options.initialTask.pollIntervalMs,
+      ...(latestDetailedTask === undefined
+        ? [options.initialTask.pollIntervalMs]
+        : [latestDetailedTask.pollIntervalMs]),
     );
     const observed = await driverContext.nextObservation(
       lastNotificationSequence,

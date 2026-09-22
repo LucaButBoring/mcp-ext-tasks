@@ -388,6 +388,21 @@ describe("Client adapter", () => {
     expect(
       createSessionPortFromClient(absent, "none").taskCapabilities,
     ).toEqual({ generation: "none" });
+    // A malformed extension value reads as unsupported instead of throwing
+    // (null previously reached Object.keys — round-10 suppressed finding).
+    const nullExtension = client();
+    vi.spyOn(nullExtension, "getProtocolEra").mockReturnValue("modern");
+    vi.spyOn(nullExtension, "getServerCapabilities").mockReturnValue({
+      extensions: {
+        "io.modelcontextprotocol/tasks": null as unknown as Record<
+          string,
+          never
+        >,
+      },
+    });
+    expect(
+      createSessionPortFromClient(nullExtension, "null-ext").taskCapabilities,
+    ).toEqual({ generation: "none" });
     legacyPort[Symbol.dispose]();
     modernPort[Symbol.dispose]();
   });

@@ -76,6 +76,14 @@ export function projectTask(snapshot: InternalTaskSnapshot): TaskView {
     "ttlMs",
     "pollInterval",
     "pollIntervalMs",
+    // Standard protocol fields, not vendor extensions: V2 snapshots carry
+    // resultType, and detailed V2 tasks carry inputRequests/result/error;
+    // _meta is standard in both generations.
+    "_meta",
+    "resultType",
+    "inputRequests",
+    "result",
+    "error",
   ]);
   const extensions = Object.fromEntries(
     Object.entries(raw).filter(([key]) => !known.has(key)),

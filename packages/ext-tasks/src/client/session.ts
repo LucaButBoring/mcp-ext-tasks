@@ -6,7 +6,7 @@ import {
   TaskStatusNotificationV1Schema,
   shouldCallToolAsTaskV1,
 } from "../core/v1/index.js";
-import type { CallToolResultV1, TaskV1 } from "../core/v1/index.js";
+import type { CallToolResultV1 } from "../core/v1/index.js";
 import {
   CreateTaskResultV2Schema,
   DetailedTaskV2Schema,
@@ -268,7 +268,9 @@ class PortTaskEnabledSession<
     this.assertUsable();
     const execution = this.activeTaskExecutionsById.get(taskId);
     if (execution !== undefined) {
-      execution.endInputLifetime();
+      // The input lifetime is NOT ended here: TaskExecution.cancel() aborts
+      // it after a successful acknowledgement, so a failed or pre-aborted
+      // cancel leaves a still-live task able to receive input.
       await execution.cancel(signal);
       return;
     }
@@ -895,21 +897,30 @@ class PortTaskEnabledSession<
       return;
     const method = (notification as Readonly<Record<string, JsonValue>>).method;
     const generation = this.port.taskCapabilities.generation;
-    const parsed =
-      generation === "v1" && method === "notifications/tasks/status"
-        ? TaskStatusNotificationV1Schema.safeParse(notification)
-        : generation === "v2" && method === "notifications/tasks"
-          ? TaskStatusNotificationV2Schema.safeParse(notification)
-          : undefined;
-    if (parsed === undefined) return;
-    if (!parsed.success) {
-      this.reportBackgroundError(parsed.error);
+    // The branches parse separately (rather than one ternary-typed union),
+    // because intersecting the V2 result's transform-based open object with
+    // the V1 result exceeds TS inference depth (TS2589).
+    let snapshot: InternalTaskSnapshot;
+    if (generation === "v1" && method === "notifications/tasks/status") {
+      const parsed = TaskStatusNotificationV1Schema.safeParse(notification);
+      if (!parsed.success) {
+        this.reportBackgroundError(parsed.error);
+        return;
+      }
+      snapshot = { generation: "v1", task: parsed.data.params };
+    } else if (generation === "v2" && method === "notifications/tasks") {
+      const parsed = TaskStatusNotificationV2Schema.safeParse(notification);
+      if (!parsed.success) {
+        this.reportBackgroundError(parsed.error);
+        return;
+      }
+      snapshot = {
+        generation: "v2",
+        task: parsed.data.params as DetailedTaskV2,
+      };
+    } else {
       return;
     }
-    const snapshot: InternalTaskSnapshot =
-      generation === "v1"
-        ? { generation: "v1", task: parsed.data.params as TaskV1 }
-        : { generation: "v2", task: parsed.data.params as DetailedTaskV2 };
     for (const execution of this.activeTaskExecutions) {
       execution.onNotification(snapshot);
     }

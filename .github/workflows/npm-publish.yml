@@ -79,6 +79,10 @@ jobs:
           fi
       - name: Determine npm dist-tag
         id: npm-tag
+        env:
+          # Passed through env rather than interpolated into the script,
+          # so a branch name can never be evaluated as shell syntax.
+          RELEASE_TARGET: ${{ github.event.release.target_commitish }}
         run: |
           VERSION=$(node -p "require('./packages/ext-tasks/package.json').version")
           # Pre-release versions publish under the beta dist-tag.
@@ -86,7 +90,7 @@ jobs:
             echo "tag=--tag beta" >> "$GITHUB_OUTPUT"
           # Releases cut from a non-main branch (patch/maintenance lines) publish
           # under release-X.Y so they never displace latest.
-          elif [[ "${{ github.event.release.target_commitish }}" != "main" ]]; then
+          elif [[ "$RELEASE_TARGET" != "main" ]]; then
             MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1,2)
             echo "tag=--tag release-${MAJOR_MINOR}" >> "$GITHUB_OUTPUT"
           else

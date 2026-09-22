@@ -678,6 +678,18 @@ describe("V2 runtime wire contracts", () => {
         params: {},
       }).success,
     ).toBe(false);
+    // Extension fields survive decoding: the pinned params type is open, so
+    // a plain-object wrapper stripping them would hide valid extensions from
+    // projectTask() (round-10 suppressed finding).
+    const [extendedTask] = fc.sample(taskFor("working"), 1);
+    const extendedParams = TaskStatusNotificationParamsV2Schema.safeParse(
+      asJson({ ...extendedTask, "vendor/trace": { hop: 1 } }),
+    );
+    expect(extendedParams.success).toBe(true);
+    if (extendedParams.success)
+      expect(
+        (extendedParams.data as Record<string, unknown>)["vendor/trace"],
+      ).toEqual({ hop: 1 });
   });
 
   it("preserves optional notification params _meta as a strict JSON record", () => {

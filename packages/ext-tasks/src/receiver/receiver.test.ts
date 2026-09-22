@@ -274,6 +274,14 @@ describe("bindTaskReceiver", () => {
       expect(previous).toHaveBeenCalledOnce();
       expect(host.validatingCalls).toEqual([method]);
 
+      // An explicit `task: null` is a malformed augmentation, not "no
+      // augmentation": it must reach validation and reject rather than
+      // delegate to the prior ordinary handler (round-12 finding).
+      await expect(host.call(method, { task: null })).rejects.toThrow(
+        "Task augmentation must be a JSON object",
+      );
+      expect(previous).toHaveBeenCalledOnce();
+
       const installed = host._requestHandlers.get(method);
       expect(installed).toBeDefined();
       binding.close();

@@ -155,13 +155,11 @@ function hasTaskAugmentation(request: unknown): boolean {
   if (request === null || typeof request !== "object" || !("params" in request))
     return false;
   const { params } = request;
-  return (
-    params !== null &&
-    typeof params === "object" &&
-    "task" in params &&
-    params.task !== null &&
-    params.task !== undefined
-  );
+  // Presence alone routes to validation: an explicitly supplied `task` —
+  // including `task: null` — must reach validateTaskAugmentation() and be
+  // rejected there, not silently delegated to a prior ordinary handler as
+  // "no augmentation".
+  return params !== null && typeof params === "object" && "task" in params;
 }
 
 function asTaskAugmentationRecord(

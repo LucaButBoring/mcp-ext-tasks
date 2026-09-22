@@ -45,6 +45,8 @@ interface TaskExecutionV2Options<TResult, TApplicationContext> {
   readonly lifecycleSignal: AbortSignal;
   readonly onInputRequest?: ApplicationInputHandler<TApplicationContext>["handle"];
   readonly reportError: (error: Error) => void;
+  /** Optional caller budget for input exchanges; unbounded when omitted. */
+  readonly maxInputRounds?: number;
 }
 
 interface V2TaskRpcContext {
@@ -60,8 +62,6 @@ interface V2InputContext<TApplicationContext> extends V2TaskRpcContext {
   readonly inputSignal: AbortSignal;
   readonly signal: AbortSignal;
 }
-
-const MAX_TASK_INPUT_ROUNDS = 10;
 
 type InputAcquisition =
   | { readonly kind: "new" }
@@ -151,9 +151,14 @@ async function driveTaskExecutionV2<TResult, TApplicationContext>(args: {
       task.status === "input_required" &&
       acquiredRequestLedger.hasNewInput(task.inputRequests)
     ) {
-      if (inputRound >= MAX_TASK_INPUT_ROUNDS)
+      // Unbounded by default: a durable task may legitimately request many
+      // distinct inputs over its lifetime, keys are deduplicated, and
+      // incompatible reuse already fails the execution. The cap is the
+      // caller's opt-in policy (options.maxInputRounds).
+      const maxInputRounds = options.maxInputRounds;
+      if (maxInputRounds !== undefined && inputRound >= maxInputRounds)
         throw new Error(
-          `Task exceeded ${String(MAX_TASK_INPUT_ROUNDS)} input-required rounds`,
+          `Task exceeded ${String(maxInputRounds)} input-required rounds (maxInputRounds)`,
         );
       inputRound += 1;
     }

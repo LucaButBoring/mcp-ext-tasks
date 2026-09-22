@@ -261,6 +261,14 @@ export interface WithTasksOptions<TApplicationContext = void> {
   readonly onInputRequest?: ApplicationInputHandler<TApplicationContext>["handle"];
   readonly onError?: (error: Error) => void;
   readonly signal?: AbortSignal;
+  /**
+   * Optional safety cap on sequential input exchanges per call or task.
+   * The protocol imposes no limit, so the default is unbounded: repeated
+   * non-advancing states and incompatible input-key reuse are rejected
+   * regardless, and a genuine runaway budget is the application's policy
+   * decision, not an SDK constant.
+   */
+  readonly maxInputRounds?: number;
 }
 
 /** Opaque current-session identity for a managed task. */

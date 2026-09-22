@@ -94,8 +94,23 @@ const ResourceLinkContentBlockV1Schema = z
     uri: z.string(),
   })
   .catchall(JsonValueSchema);
+// The pinned V1 wire schema requires embedded resource contents to be text
+// (uri + text) or blob (uri + blob); an unconstrained record would let a
+// malformed `resource: {}` decode as valid server output.
+const TextResourceContentsV1Schema = z
+  .object({ uri: z.string(), text: z.string() })
+  .catchall(JsonValueSchema);
+const BlobResourceContentsV1Schema = z
+  .object({ uri: z.string(), blob: z.string() })
+  .catchall(JsonValueSchema);
 const EmbeddedResourceContentBlockV1Schema = z
-  .object({ type: z.literal("resource"), resource: JsonRecordSchema })
+  .object({
+    type: z.literal("resource"),
+    resource: z.union([
+      TextResourceContentsV1Schema,
+      BlobResourceContentsV1Schema,
+    ]),
+  })
   .catchall(JsonValueSchema);
 
 export const ContentBlockV1Schema = z.union([

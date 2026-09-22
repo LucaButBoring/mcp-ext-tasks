@@ -180,7 +180,7 @@ describe("request-scoped input-required continuation", () => {
     await session.close();
   });
 
-  it("limits advancing input continuation to ten rounds", async () => {
+  it("caps advancing input continuation only with an explicit maxInputRounds", async () => {
     const port = new FakePort({ generation: "v2", capabilities: {} });
     let round = 0;
     port.dispatchHandler = async (): Promise<JsonRpcResponse> => {
@@ -202,9 +202,15 @@ describe("request-scoped input-required continuation", () => {
       expect(request.kind).toBe("roots");
       return { roots: [] } as never;
     };
-    const session = withTasks(port, { tools, onInputRequest });
+    // Unbounded by default (round-11 finding): the cap applies only when the
+    // caller opts in via maxInputRounds.
+    const session = withTasks(port, {
+      tools,
+      onInputRequest,
+      maxInputRounds: 10,
+    });
     await expect(session.callTool("demo")).rejects.toThrow(
-      "exceeded 10 input-required rounds",
+      "exceeded 10 input-required rounds (options.maxInputRounds)",
     );
     expect(port.requests).toHaveLength(11);
     await session.close();

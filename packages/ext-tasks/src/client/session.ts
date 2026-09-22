@@ -91,8 +91,6 @@ type TaskIdentityOwner = {
   readonly token: symbol;
 };
 
-const MAX_REQUEST_INPUT_ROUNDS = 10;
-
 function taskIdentityKey(reference: {
   readonly generation: "v1" | "v2";
   readonly taskId: TaskId;
@@ -420,9 +418,14 @@ class PortTaskEnabledSession<
         throwIfAborted(callSignal);
         const roundResult = responseResult(response);
         if (!this.isRequestInputRequired(roundResult)) break;
-        if (inputRound >= MAX_REQUEST_INPUT_ROUNDS)
+        // Unbounded by default: the protocol does not cap MRTR exchanges,
+        // and the repeated non-advancing requestState check below already
+        // rejects the loop case. options.maxInputRounds is the caller's
+        // opt-in budget for runaway interactions.
+        const maxInputRounds = this.options.maxInputRounds;
+        if (maxInputRounds !== undefined && inputRound >= maxInputRounds)
           throw new Error(
-            `Tool call exceeded ${String(MAX_REQUEST_INPUT_ROUNDS)} input-required rounds`,
+            `Tool call exceeded ${String(maxInputRounds)} input-required rounds (options.maxInputRounds)`,
           );
         const inputRequired = parseResult(
           InputRequiredCallToolResultV2Schema,
@@ -570,6 +573,7 @@ class PortTaskEnabledSession<
             dispatchContext,
             lifecycleSignal: callSignal,
             onInputRequest: this.options.onInputRequest,
+            maxInputRounds: this.options.maxInputRounds,
             reportError: (error) => {
               this.reportBackgroundError(error);
             },
@@ -725,6 +729,7 @@ class PortTaskEnabledSession<
         dispatchContext,
         lifecycleSignal: resumeSignal,
         onInputRequest: this.options.onInputRequest,
+        maxInputRounds: this.options.maxInputRounds,
         reportError: (error) => {
           this.reportBackgroundError(error);
         },

@@ -186,6 +186,9 @@ describe("V2 input and task behavior", () => {
     };
     const session = withTasks(port, {
       tools: { currentTool: () => undefined },
+      // The cap is opt-in (round-11 finding): the protocol has no input-round
+      // limit, so bounding requires the caller's explicit budget.
+      maxInputRounds: 10,
       onInputRequest: async () => {
         await Promise.resolve();
         handlerCalls += 1;
@@ -195,7 +198,9 @@ describe("V2 input and task behavior", () => {
     const execution = await session.callTool("bounded");
     await expect(execution.result()).resolves.toMatchObject({
       status: "failed",
-      error: { message: "Task exceeded 10 input-required rounds" },
+      error: {
+        message: "Task exceeded 10 input-required rounds (maxInputRounds)",
+      },
     });
     expect(handlerCalls).toBe(10);
     expect(getCalls).toBe(11);

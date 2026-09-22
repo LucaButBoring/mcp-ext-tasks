@@ -271,6 +271,25 @@ describe("V1 Zod wire schemas", () => {
     expect(
       CallToolResultV1Schema.safeParse({ content: [{ type: "text" }] }).success,
     ).toBe(false);
+    // Embedded resources must be text (uri+text) or blob (uri+blob) contents;
+    // an empty record is not a valid resource (round-11 finding).
+    expect(
+      CallToolResultV1Schema.safeParse({
+        content: [{ type: "resource", resource: {} }],
+      }).success,
+    ).toBe(false);
+    expect(
+      CallToolResultV1Schema.safeParse({
+        content: [{ type: "resource", resource: { uri: "https://x" } }],
+      }).success,
+    ).toBe(false);
+    expect(
+      CallToolResultV1Schema.safeParse({
+        content: [
+          { type: "resource", resource: { uri: "https://x", blob: "aGk=" } },
+        ],
+      }).success,
+    ).toBe(true);
     expect(CallToolResultV1Schema.safeParse({}).success).toBe(false);
   });
 

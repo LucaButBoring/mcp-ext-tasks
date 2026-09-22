@@ -79,17 +79,35 @@ async function main() {
       `Expected @modelcontextprotocol/client 2.x, received ${installedClientManifest.version}`,
     );
 
+    // The consumer exercises the SDK-backed entry points, because a peer
+    // matrix that only touches withTasks (custom port, no SDK dependency)
+    // could pass while the adapters rely on Client APIs the peer lacks.
     await writeFile(
       join(consumerDirectory, "adapter.ts"),
-      `import { withTasks } from "@modelcontextprotocol/ext-tasks/client";
+      `import {
+  createSessionPortFromClient,
+  createTaskSessionFromClient,
+  withTasks,
+} from "@modelcontextprotocol/ext-tasks/client";
 import type { ConnectedMcpSessionPort } from "@modelcontextprotocol/ext-tasks/client";
-import type { Client } from "@modelcontextprotocol/client";
+import { bindTaskReceiver } from "@modelcontextprotocol/ext-tasks/receiver";
+import { Client } from "@modelcontextprotocol/client";
 
 declare const port: ConnectedMcpSessionPort;
-declare const client: Client;
 const session = withTasks(port);
 void session;
-void client;
+const client = new Client({ name: "peer-check", version: "0.0.0" });
+const sdkPort = createSessionPortFromClient(client, "peer-check");
+void sdkPort;
+const sdkSession = createTaskSessionFromClient(client, {
+  endpointId: "peer-check",
+});
+void sdkSession;
+const receiver = bindTaskReceiver(client, {
+  methods: { "elicitation/create": true },
+  elicitation: async () => ({ action: "cancel" }),
+});
+void receiver;
 `,
     );
     await writeFile(
@@ -116,9 +134,42 @@ void client;
       { cwd: consumerDirectory },
     );
 
+    // The runtime smoke constructs the SDK-backed adapters over the installed
+    // peer Client, so an API the peer dropped fails here instead of at a
+    // consumer's runtime.
     await writeFile(
       join(consumerDirectory, "runtime.mjs"),
-      'await import("@modelcontextprotocol/ext-tasks/client");\n',
+      `import {
+  createSessionPortFromClient,
+  createTaskSessionFromClient,
+} from "@modelcontextprotocol/ext-tasks/client";
+import { bindTaskReceiver } from "@modelcontextprotocol/ext-tasks/receiver";
+import { Client } from "@modelcontextprotocol/client";
+
+const port = createSessionPortFromClient(
+  new Client({ name: "peer-check", version: "0.0.0" }),
+  "peer-port",
+);
+port[Symbol.dispose]();
+const session = createTaskSessionFromClient(
+  new Client({ name: "peer-check", version: "0.0.0" }),
+  { endpointId: "peer-session" },
+);
+await session.close();
+const receiver = bindTaskReceiver(
+  // The receiver installs an elicitation handler, and the peer Client
+  // rejects handlers for capabilities the client did not declare.
+  new Client(
+    { name: "peer-check", version: "0.0.0" },
+    { capabilities: { elicitation: { form: {} } } },
+  ),
+  {
+    methods: { "elicitation/create": true },
+    elicitation: async () => ({ action: "cancel" }),
+  },
+);
+receiver.close();
+`,
     );
     run(process.execPath, ["runtime.mjs"], { cwd: consumerDirectory });
 

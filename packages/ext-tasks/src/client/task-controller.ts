@@ -16,7 +16,6 @@ import type {
   TaskResultOptions,
 } from "./api.js";
 import {
-  DEFAULT_TASK_POLL_INTERVAL_MS,
   defaultResultCodec,
   taskPollInterval,
   terminalStatus,
@@ -117,10 +116,7 @@ export function createTaskController(
           let task = await rpc.get(operationSignal);
           while (!terminalStatus(task.status)) {
             await waitForTaskPoll(
-              Math.max(
-                DEFAULT_TASK_POLL_INTERVAL_MS,
-                task.pollInterval ?? DEFAULT_TASK_POLL_INTERVAL_MS,
-              ),
+              taskPollInterval(task.pollInterval),
               operationSignal,
             );
             task = await rpc.get(operationSignal);

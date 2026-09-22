@@ -908,6 +908,15 @@ describe("V2 runtime wire contracts", () => {
       }),
     ).toBe(true);
     expect(hasTaskServerCapabilityV2({ extensions: {} })).toBe(false);
+    // A malformed extension value must not enable Tasks: the schema
+    // requires an empty object, so key presence alone is not support.
+    for (const malformed of [null, true, 1, "yes", [], { extra: true }]) {
+      expect(
+        hasTaskServerCapabilityV2({
+          extensions: { "io.modelcontextprotocol/tasks": malformed },
+        }),
+      ).toBe(false);
+    }
   });
 
   it("merges the tasks capability into existing client capabilities", () => {

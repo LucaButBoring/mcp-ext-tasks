@@ -234,6 +234,8 @@ describe("V2 input and task behavior", () => {
                   createdAt: "a",
                   lastUpdatedAt: "a",
                   ttlMs: null,
+                  // Fast hint: hint-less tasks poll at the 1s default.
+                  pollIntervalMs: 1,
                 }),
               };
             if (record.method === "tasks/get") {
@@ -248,6 +250,7 @@ describe("V2 input and task behavior", () => {
                     createdAt: "a",
                     lastUpdatedAt: "b",
                     ttlMs: null,
+                    pollIntervalMs: 1,
                     inputRequests: Object.fromEntries(
                       inputs.map(({ key, kind }) => [
                         key,
@@ -375,6 +378,8 @@ describe("V2 input and task behavior", () => {
             createdAt: "a",
             lastUpdatedAt: "a",
             ttlMs: null,
+            // Fast hint: hint-less tasks poll at the 1s default.
+            pollIntervalMs: 1,
           }),
         };
       if (method === "tasks/get") {
@@ -389,6 +394,7 @@ describe("V2 input and task behavior", () => {
               createdAt: "a",
               lastUpdatedAt: String(getCalls),
               ttlMs: null,
+              pollIntervalMs: 1,
               inputRequests: {
                 same:
                   getCalls <= 2

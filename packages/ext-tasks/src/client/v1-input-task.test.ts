@@ -530,6 +530,19 @@ describe("V1 input and task behavior", () => {
             present &&
             (taskSupport === "required" ||
               (taskSupport === "optional" && preferTask));
+          // A tool that requires tasks on a server without the capability
+          // is rejected before dispatch rather than degraded to an ordinary
+          // call that violates the tool's contract (round-9 finding 6).
+          if (taskSupport === "required" && !taskSelected) {
+            await expect(
+              session.callTool("x", undefined, {
+                task: { preference: preferTask ? "prefer" : "allow" },
+              }),
+            ).rejects.toThrow("requires task execution");
+            expect(port.requests).toEqual([]);
+            await session.close();
+            return;
+          }
           const execution = await session.callTool("x", undefined, {
             task: { preference: preferTask ? "prefer" : "allow" },
           });
@@ -550,6 +563,32 @@ describe("V1 input and task behavior", () => {
         },
       ),
     );
+  });
+
+  it("rejects preference 'forbid' against a tool that requires task execution", async () => {
+    const port = new FakePort({
+      generation: "v1",
+      capabilities: { requests: { tools: { call: {} } } },
+    });
+    const session = withTasks(port, {
+      tools: {
+        currentTool: () =>
+          toolDeclaration({
+            name: "x",
+            inputSchema: { type: "object" },
+            taskSupport: "required",
+          }),
+      },
+    });
+    // The conflict is rejected before dispatch: an ordinary tools/call to a
+    // taskSupport-required tool cannot validly execute (round-9 finding 6).
+    await expect(
+      session.callTool("x", undefined, { task: { preference: "forbid" } }),
+    ).rejects.toThrow(
+      'Tool "x" requires task execution, which options.task.preference forbids',
+    );
+    expect(port.requests).toEqual([]);
+    await session.close();
   });
 
   it("drives a V1 task to a separately retrieved result", async () => {

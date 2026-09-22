@@ -49,6 +49,33 @@ describe("task session facade", () => {
     await session.close();
   });
 
+  it("aborts an in-flight listTasks when the session closes", async () => {
+    const port = new FakePort({
+      generation: "v1",
+      capabilities: { list: {}, requests: { tools: { call: {} } } },
+    });
+    const listSeen = vi.fn();
+    port.dispatchHandler = (_request, options) =>
+      new Promise((_resolve, reject) => {
+        listSeen();
+        // The fake honors the dispatch signal the way a real transport
+        // does, so the linked session lifecycle can be observed aborting.
+        options?.signal?.addEventListener("abort", () => {
+          const reason: unknown = options.signal?.reason;
+          reject(reason instanceof Error ? reason : new Error("aborted"));
+        });
+      });
+    const session = withTasks(port, {
+      tools: { currentTool: () => undefined },
+    });
+    const listing = session.listTasks();
+    await vi.waitFor(() => {
+      expect(listSeen).toHaveBeenCalledOnce();
+    });
+    await session.close();
+    await expect(listing).rejects.toThrow("Task-enabled session is closed");
+  });
+
   it("settles an owned V2 task", async () => {
     const port = new FakePort({ generation: "v2", capabilities: {} });
     let reads = 0;

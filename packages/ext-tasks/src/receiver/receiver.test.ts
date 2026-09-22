@@ -177,13 +177,19 @@ describe("bindTaskReceiver", () => {
     ).rejects.toThrow("Task augmentation must be a JSON object");
     await expect(
       host.call("sampling/createMessage", { task: { ttl: -1 } }),
-    ).rejects.toThrow("task.ttl must be a non-negative integer or null");
+    ).rejects.toThrow("task.ttl must be a non-negative integer");
     await expect(
       host.call("sampling/createMessage", { task: { ttl: 1.5 } }),
-    ).rejects.toThrow("task.ttl must be a non-negative integer or null");
-    // A well-formed augmentation still creates the task.
+    ).rejects.toThrow("task.ttl must be a non-negative integer");
+    // `ttl: null` is rejected too: the 2025-11-25 TaskMetadataV1Schema
+    // defines request-level ttl as an optional integer, and omission — not
+    // null — represents an unspecified TTL.
     await expect(
       host.call("sampling/createMessage", { task: { ttl: null } }),
+    ).rejects.toThrow("task.ttl must be a non-negative integer");
+    // A well-formed augmentation still creates the task.
+    await expect(
+      host.call("sampling/createMessage", { task: { ttl: 60_000 } }),
     ).resolves.toMatchObject({ task: { taskId: "augmented" } });
   });
 
@@ -260,7 +266,7 @@ describe("bindTaskReceiver", () => {
       });
 
       await expect(
-        host.call(method, { task: { ttl: null } }),
+        host.call(method, { task: { ttl: 60_000 } }),
       ).resolves.toMatchObject({ task: { taskId: `${option}-task` } });
       expect(host.validatingCalls).toEqual([]);
 
@@ -274,7 +280,7 @@ describe("bindTaskReceiver", () => {
       expect(host._requestHandlers.get(method)).toBe(previous);
       if (installed)
         await expect(
-          installed({ method, params: { task: { ttl: null } } }),
+          installed({ method, params: { task: { ttl: 60_000 } } }),
         ).rejects.toThrow("closed");
     });
   }
@@ -525,22 +531,31 @@ describe("bindTaskReceiver", () => {
     );
   });
 
-  it("rejects new work deterministically at maxTasks and accepts it after expiry", async () => {
-    vi.useFakeTimers();
+  it("rejects new work at maxTasks only while every retained task is live", async () => {
     const host = new Host();
     let id = 0;
+    const work = deferred<Record<string, boolean>>();
+    let settled = false;
     bindTaskReceiver(asClient(host), {
       methods: { "sampling/createMessage": true },
-      sampling: () => Promise.resolve({ ok: true }),
+      sampling: () => {
+        if (settled) return Promise.resolve({ ok: true });
+        settled = true;
+        return work.promise;
+      },
       createTaskId: () => `capacity-${String(++id)}`,
       maxTasks: 1,
-      ttlMs: 5,
+      ttlMs: null,
     });
+    // A live (pending) task cannot be evicted, so capacity still rejects.
     await host.call("sampling/createMessage");
     await expect(host.call("sampling/createMessage")).rejects.toThrow(
       "capacity of 1",
     );
-    await vi.advanceTimersByTimeAsync(5);
+    // Once the retained task settles it is terminal, and eviction admits
+    // new work despite unlimited retention (round-9 suppressed finding 5).
+    work.resolve({ ok: true });
+    await flush();
     await expect(host.call("sampling/createMessage")).resolves.toMatchObject({
       task: { taskId: "capacity-2" },
     });

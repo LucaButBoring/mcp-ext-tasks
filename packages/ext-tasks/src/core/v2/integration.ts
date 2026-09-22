@@ -5,6 +5,7 @@ import {
   CreateTaskResultV2Schema,
   DetailedTaskV2Schema,
   GetTaskRequestV2Schema,
+  TasksExtensionCapabilityV2Schema,
   TaskStatusNotificationV2Schema,
   TaskV2Schema,
   UpdateTaskRequestV2Schema,
@@ -36,10 +37,17 @@ function asObjectRecord(
 
 function hasOwnTaskExtension(value: unknown): boolean {
   const extensions = asObjectRecord(value);
-  return (
-    extensions !== undefined &&
-    Object.prototype.hasOwnProperty.call(extensions, TASKS_EXTENSION_ID_V2)
-  );
+  if (
+    extensions === undefined ||
+    !Object.prototype.hasOwnProperty.call(extensions, TASKS_EXTENSION_ID_V2)
+  )
+    return false;
+  // The extension value is validated as well as the key's presence, because
+  // a malformed envelope (null, true, a non-empty object) must not enable
+  // V2 task behavior the schema would reject.
+  return TasksExtensionCapabilityV2Schema.safeParse(
+    extensions[TASKS_EXTENSION_ID_V2],
+  ).success;
 }
 export const isTaskV2: (value: unknown) => value is TaskV2 = (
   value: unknown,

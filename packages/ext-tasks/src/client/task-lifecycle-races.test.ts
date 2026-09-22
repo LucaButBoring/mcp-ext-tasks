@@ -10,8 +10,11 @@ import {
   withTasks,
 } from "./index.js";
 import {
+  DEFAULT_TASK_POLL_INTERVAL_MS,
   deterministicJson,
+  MIN_TASK_POLL_INTERVAL_MS,
   TaskExecution,
+  taskPollInterval,
   waitForTaskPoll,
 } from "./execution.js";
 import {
@@ -26,6 +29,19 @@ describe("task lifecycle and races", () => {
   it("canonicalizes undefined values deterministically", () => {
     expect(deterministicJson(undefined)).toBe("[undefined]");
     expect(deterministicJson({ keep: 1, omit: undefined })).toBe('{"keep":1}');
+  });
+  it("defaults hint-less polling to a production-safe cadence and floors hints", () => {
+    // No server hint: the 1s default applies, not the 10ms floor — a 10ms
+    // fallback is 100 requests/second/task (round-9 suppressed finding 1).
+    expect(taskPollInterval()).toBe(DEFAULT_TASK_POLL_INTERVAL_MS);
+    expect(taskPollInterval(undefined, undefined)).toBe(
+      DEFAULT_TASK_POLL_INTERVAL_MS,
+    );
+    // A server hint is honored, floored at the busy-wait guard.
+    expect(taskPollInterval(50)).toBe(50);
+    expect(taskPollInterval(0)).toBe(MIN_TASK_POLL_INTERVAL_MS);
+    expect(taskPollInterval(undefined, 25)).toBe(25);
+    expect(taskPollInterval(3, 25)).toBe(25);
   });
   it("caps poll timers at the platform maximum delay", async () => {
     vi.useFakeTimers();
@@ -366,6 +382,9 @@ describe("task lifecycle and races", () => {
                 createdAt: "a",
                 lastUpdatedAt: "a",
                 ttlMs: null,
+                // An explicit fast hint: hint-less tasks poll at the 1s
+                // production default, which would dominate this test's runtime.
+                pollIntervalMs: 1,
               }),
             };
           if (record.method === "tasks/get") {

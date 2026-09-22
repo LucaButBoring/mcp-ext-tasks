@@ -62,7 +62,11 @@ export interface TaskReceiverOptions {
   readonly pollIntervalMs?: number | null;
   /** Maximum tasks returned in one `tasks/list` page. Defaults to 100. */
   readonly pageSize?: number;
-  /** Maximum retained tasks, including pending tasks. Defaults to 1,000. */
+  /**
+   * Maximum retained tasks, including pending tasks. Defaults to 1,000.
+   * At capacity the oldest terminal task is evicted to admit new work, so
+   * unlimited retention (`ttlMs: null`) cannot permanently exhaust capacity.
+   */
   readonly maxTasks?: number;
   readonly sampling?: TaskReceiverCallback;
   readonly elicitation?: TaskReceiverCallback;
@@ -178,10 +182,13 @@ function validateTaskAugmentation(request: unknown): void {
   const augmentation = asTaskAugmentationRecord(params.task);
   if (augmentation === undefined)
     throw new Error("Task augmentation must be a JSON object");
-  if (!Object.hasOwn(augmentation, "ttl") || augmentation.ttl === null) return;
+  if (!Object.hasOwn(augmentation, "ttl")) return;
+  // `null` is rejected along with other invalid shapes: the 2025-11-25
+  // TaskMetadataV1Schema defines request-level ttl as an optional integer,
+  // and omission — not null — represents an unspecified TTL.
   const ttl = augmentation.ttl;
   if (typeof ttl !== "number" || !Number.isInteger(ttl) || ttl < 0)
-    throw new RangeError("task.ttl must be a non-negative integer or null");
+    throw new RangeError("task.ttl must be a non-negative integer");
 }
 
 function taskIdOf(request: unknown): string {
@@ -293,6 +300,23 @@ export function bindTaskReceiver(
       if (record.expiresAt !== null && timestamp >= record.expiresAt)
         remove(record, "expiry");
   };
+  const evictOldestTerminal = (): boolean => {
+    // Insertion order is creation order, so the first terminal record is the
+    // oldest one. Only settled work is evicted: dropping a live task would
+    // trade capacity for correctness.
+    for (const record of tasks.values()) {
+      if (
+        record.task.status === "completed" ||
+        record.task.status === "failed" ||
+        record.task.status === "cancelled"
+      ) {
+        clearExpiry(record);
+        tasks.delete(record.task.taskId);
+        return true;
+      }
+    }
+    return false;
+  };
   const armExpiry = (record: TaskRecord): void => {
     if (record.expiresAt === null) return;
     const remainingMs = record.expiresAt - now();
@@ -361,7 +385,10 @@ export function bindTaskReceiver(
         expire();
         validateTaskAugmentation(raw);
         const params = paramsOf(raw);
-        if (tasks.size >= maxTasks)
+        // The oldest terminal record is evicted at capacity, because the
+        // finite cap paired with unlimited default retention would otherwise
+        // permanently stop accepting work after maxTasks requests.
+        if (tasks.size >= maxTasks && !evictOldestTerminal())
           throw new Error(
             `Task receiver capacity of ${String(maxTasks)} retained tasks reached`,
           );

@@ -228,14 +228,27 @@ class PortTaskEnabledSession<
     this.assertUsable();
     if (this.capabilities.inventory !== "server-list")
       throw new Error("Server task inventory is not supported by this session");
-    const response = await dispatchWithRetry(
-      this.port,
-      {
-        method: "tasks/list",
-        ...(cursor === undefined ? {} : { params: { cursor } }),
-      },
-      { signal },
+    // The caller signal is linked with the session lifecycle because closing
+    // or invalidating the session must abort an in-flight list request
+    // rather than letting it hang or resolve on an unusable session.
+    const listLifecycle = linkAbortSignals(
+      this.lifecycleController.signal,
+      signal,
     );
+    let response: JsonRpcResponse;
+    try {
+      response = await dispatchWithRetry(
+        this.port,
+        {
+          method: "tasks/list",
+          ...(cursor === undefined ? {} : { params: { cursor } }),
+        },
+        { signal: listLifecycle.signal },
+      );
+    } finally {
+      listLifecycle.dispose();
+    }
+    this.assertUsable();
     const result = parseResult(
       ListTasksResultV1Schema,
       responseResult(response),
@@ -259,6 +272,9 @@ class PortTaskEnabledSession<
       await execution.cancel(signal);
       return;
     }
+    // Deliberately detached from the session lifecycle: an in-flight
+    // stand-alone cancel is the one operation that should finish during a
+    // concurrent close (see "uses a detached controller" in the facade test).
     const operationLifecycle = new AbortController();
     await createTaskController(
       this.port,
@@ -313,15 +329,32 @@ class PortTaskEnabledSession<
       callLifecycle.dispose();
       throw new TaskRetentionUnsupportedError();
     }
+    const portCapabilities = this.port.taskCapabilities;
+    const toolV1 =
+      portCapabilities.generation === "v1" && declaration !== undefined
+        ? projectToolForGeneration(declaration, "v1")
+        : undefined;
     const callAsTaskV1 =
-      generation === "v1" &&
-      declaration !== undefined &&
+      portCapabilities.generation === "v1" &&
+      toolV1 !== undefined &&
       shouldCallToolAsTaskV1(
-        this.port.taskCapabilities.capabilities,
-        projectToolForGeneration(declaration, "v1"),
+        portCapabilities.capabilities,
+        toolV1,
         preference === "prefer" || preference === "require",
       ) &&
       preference !== "forbid";
+    // A declaration-level taskSupport of "required" that cannot be honored is
+    // rejected before dispatch, because an ordinary tools/call to such a tool
+    // violates its known contract and cannot validly execute — whether the
+    // caller forbade tasks or the server lacks the capability.
+    if (toolV1?.execution?.taskSupport === "required" && !callAsTaskV1) {
+      callLifecycle.dispose();
+      throw new Error(
+        preference === "forbid"
+          ? `Tool "${name}" requires task execution, which options.task.preference forbids`
+          : `Tool "${name}" requires task execution, which this server does not support`,
+      );
+    }
     if (preference === "require" && generation !== "v2" && !callAsTaskV1) {
       callLifecycle.dispose();
       throw new Error("Task execution was required but is unavailable");

@@ -6,8 +6,8 @@ import { TaskCancellationUnsupportedError } from "./api.js";
 import type { TaskSessionEndpointId, ToolDeclaration } from "./api.js";
 import type { InternalTaskHandle } from "./internal.js";
 import {
-  DEFAULT_TASK_POLL_INTERVAL_MS,
   TaskExecution,
+  taskPollInterval,
   terminalStatus,
 } from "./execution.js";
 import { createTaskRpc } from "./port.js";
@@ -49,10 +49,7 @@ export function createTaskExecutionV1<TResult, TApplicationContext>(options: {
       while (!terminalStatus(current.status)) {
         const observed = await context.nextObservation(
           notificationSequence,
-          Math.max(
-            DEFAULT_TASK_POLL_INTERVAL_MS,
-            current.pollInterval ?? DEFAULT_TASK_POLL_INTERVAL_MS,
-          ),
+          taskPollInterval(current.pollInterval),
           async (observationSignal) => ({
             generation: "v1" as const,
             task: await rpc.get(observationSignal),

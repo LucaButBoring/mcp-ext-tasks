@@ -88,10 +88,10 @@ const receiver = bindTaskReceiver(client, {
 | `ttlMs`          | Total lifetime from task creation. Use a non-negative integer, `null`, or a function returning either. The function is sampled once per task. The default is `null` (no time expiry). |
 | `pollIntervalMs` | Non-negative polling hint. `null` or omission leaves the hint off the task.                                                                                                           |
 | `pageSize`       | Maximum records in one `tasks/list` page. Must be a positive integer; defaults to `100`.                                                                                              |
-| `maxTasks`       | Maximum retained records, including pending work. Must be a positive integer; defaults to `1,000`.                                                                                    |
+| `maxTasks`       | Maximum retained records, including pending work. Must be a positive integer; defaults to `1,000`. At capacity the oldest terminal record is evicted to admit new work.               |
 | `createTaskId`   | Optional ID factory. Otherwise the binding uses `crypto.randomUUID()`.                                                                                                                |
 
-A finite `ttlMs` expires from task creation. Reaching `maxTasks` rejects new task creation.
+A finite `ttlMs` expires from task creation. Reaching `maxTasks` rejects new task creation only while every retained task is still live — settled records are evicted oldest-first to keep the receiver accepting work under unlimited retention.
 
 ## Handle cancellation and background errors
 

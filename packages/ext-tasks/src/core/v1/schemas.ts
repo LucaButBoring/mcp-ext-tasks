@@ -33,7 +33,9 @@ export type TaskSupportV1 = z.output<typeof TaskSupportV1Schema>;
 export const TaskEligibleMethodV1Schema = z.literal("tools/call");
 export type TaskEligibleMethodV1 = z.output<typeof TaskEligibleMethodV1Schema>;
 
-export const JsonRpcRequestIdV1Schema = z.union([z.string(), z.number()]);
+// z.int(), not z.number(): the pinned V1 RequestId is string | integer, and
+// this schema backs every V1 request codec's public runtime validation.
+export const JsonRpcRequestIdV1Schema = z.union([z.string(), z.int()]);
 export type JsonRpcRequestIdV1 = z.output<typeof JsonRpcRequestIdV1Schema>;
 
 export const TaskMetadataV1Schema = z.object({

@@ -113,10 +113,14 @@ describe("bindTaskReceiver", () => {
       createTaskId: () => `sampled-${String(++id)}`,
     });
 
-    await expect(host.call("sampling/createMessage")).resolves.toMatchObject({
+    await expect(
+      host.call("sampling/createMessage", { task: {} }),
+    ).resolves.toMatchObject({
       task: { taskId: "sampled-1", ttl: 5 },
     });
-    await expect(host.call("sampling/createMessage")).resolves.toMatchObject({
+    await expect(
+      host.call("sampling/createMessage", { task: {} }),
+    ).resolves.toMatchObject({
       task: { taskId: "sampled-2", ttl: 10 },
     });
     expect(ttlMs).toHaveBeenCalledTimes(2);
@@ -145,7 +149,7 @@ describe("bindTaskReceiver", () => {
       createTaskId: () => "long-lived",
     });
 
-    await host.call("sampling/createMessage");
+    await host.call("sampling/createMessage", { task: {} });
     await vi.advanceTimersByTimeAsync(2_147_483_647);
     await expect(
       host.call("tasks/get", { taskId: "long-lived" }),
@@ -159,6 +163,27 @@ describe("bindTaskReceiver", () => {
     await expect(
       host.call("tasks/get", { taskId: "long-lived" }),
     ).rejects.toThrow("expired");
+  });
+
+  it("never allocates a task for a plain request (round-13 finding)", async () => {
+    // 2025-11-25 requests task execution only via `params.task` presence:
+    // answering an ordinary sampling request with a CreateTaskResult would
+    // change the method's result shape for non-Tasks callers.
+    const host = new Host();
+    const sampling = vi.fn(() => Promise.resolve({ ok: true }));
+    bindTaskReceiver(asClient(host), {
+      methods: { "sampling/createMessage": true },
+      sampling,
+      createTaskId: () => "never-created",
+    });
+    // No prior ordinary handler: the plain request stays unhandled.
+    await expect(host.call("sampling/createMessage")).rejects.toThrow(
+      "only handles task-augmented",
+    );
+    expect(sampling).not.toHaveBeenCalled();
+    await expect(host.call("tasks/list")).resolves.toMatchObject({
+      tasks: [],
+    });
   });
 
   it("rejects malformed task augmentations and invalid augmentation TTLs", async () => {
@@ -201,7 +226,7 @@ describe("bindTaskReceiver", () => {
       sampling: () => work.promise,
       createTaskId: () => "blocking",
     });
-    await host.call("sampling/createMessage");
+    await host.call("sampling/createMessage", { task: {} });
     // Issued mid-work: it must block (per 2025-11-25), not reject.
     let settled = false;
     const pending = host.call("tasks/result", { taskId: "blocking" });
@@ -302,18 +327,19 @@ describe("bindTaskReceiver", () => {
       createTaskId: () => "json-task",
     });
     await host.call("sampling/createMessage", {
+      task: {},
       keep: 1,
       omit: undefined,
       nested: { toJSON: () => ({ projected: true }) },
     });
     expect(sampling).toHaveBeenCalledWith(
       expect.objectContaining({
-        params: { keep: 1, nested: { projected: true } },
+        params: { task: {}, keep: 1, nested: { projected: true } },
       }),
       expect.any(Object),
     );
     await expect(
-      host.call("sampling/createMessage", { invalid: 1n }),
+      host.call("sampling/createMessage", { task: {}, invalid: 1n }),
     ).rejects.toThrow("serialized as JSON");
     await expect(host.call("tasks/list")).resolves.toMatchObject({
       tasks: [expect.objectContaining({ taskId: "json-task" })],
@@ -371,7 +397,7 @@ describe("bindTaskReceiver", () => {
       createTaskId: () => "notify-task",
       onError,
     });
-    await host.call("sampling/createMessage");
+    await host.call("sampling/createMessage", { task: {} });
     await flush();
     await expect(
       host.call("tasks/result", { taskId: "notify-task" }),
@@ -401,7 +427,7 @@ describe("bindTaskReceiver", () => {
         throw sinkFailure;
       },
     });
-    await host.call("sampling/createMessage");
+    await host.call("sampling/createMessage", { task: {} });
     await flush();
     notification.reject(new Error("send failed"));
     await flush();
@@ -425,7 +451,7 @@ describe("bindTaskReceiver", () => {
       createTaskId: () => "expiring",
       onError,
     });
-    await host.call("elicitation/create");
+    await host.call("elicitation/create", { task: {} });
     await vi.advanceTimersByTimeAsync(10);
     expect(signal?.aborted).toBe(true);
     await expect(
@@ -451,7 +477,7 @@ describe("bindTaskReceiver", () => {
     });
 
     await expect(
-      host.call("elicitation/create", { message: "Confirm" }),
+      host.call("elicitation/create", { task: {}, message: "Confirm" }),
     ).resolves.toMatchObject({
       task: { taskId: "elicitation-task", status: "input_required" },
     });
@@ -480,7 +506,7 @@ describe("bindTaskReceiver", () => {
       createTaskId: () => `cancel-${String(++taskId)}`,
       onError,
     });
-    await host.call("sampling/createMessage");
+    await host.call("sampling/createMessage", { task: {} });
     await expect(
       host.call("tasks/cancel", { taskId: "cancel-1" }),
     ).resolves.toMatchObject({ status: "cancelled" });
@@ -491,7 +517,7 @@ describe("bindTaskReceiver", () => {
     ).resolves.toMatchObject({ status: "cancelled" });
     expect(host.notificationInputs).toHaveLength(1);
 
-    await host.call("sampling/createMessage");
+    await host.call("sampling/createMessage", { task: {} });
     await host.call("tasks/cancel", { taskId: "cancel-2" });
     second.reject(new Error("late callback failure"));
     await flush();
@@ -513,11 +539,11 @@ describe("bindTaskReceiver", () => {
       pageSize: 2,
       ttlMs: 20,
     });
-    await host.call("sampling/createMessage");
+    await host.call("sampling/createMessage", { task: {} });
     await vi.advanceTimersByTimeAsync(1);
-    await host.call("sampling/createMessage");
+    await host.call("sampling/createMessage", { task: {} });
     await vi.advanceTimersByTimeAsync(1);
-    await host.call("sampling/createMessage");
+    await host.call("sampling/createMessage", { task: {} });
     const first = (await host.call("tasks/list")) as {
       tasks: Array<{ taskId: string }>;
       nextCursor?: string;
@@ -556,15 +582,17 @@ describe("bindTaskReceiver", () => {
       ttlMs: null,
     });
     // A live (pending) task cannot be evicted, so capacity still rejects.
-    await host.call("sampling/createMessage");
-    await expect(host.call("sampling/createMessage")).rejects.toThrow(
-      "capacity of 1",
-    );
+    await host.call("sampling/createMessage", { task: {} });
+    await expect(
+      host.call("sampling/createMessage", { task: {} }),
+    ).rejects.toThrow("capacity of 1");
     // Once the retained task settles it is terminal, and eviction admits
     // new work despite unlimited retention (round-9 suppressed finding 5).
     work.resolve({ ok: true });
     await flush();
-    await expect(host.call("sampling/createMessage")).resolves.toMatchObject({
+    await expect(
+      host.call("sampling/createMessage", { task: {} }),
+    ).resolves.toMatchObject({
       task: { taskId: "capacity-2" },
     });
   });
@@ -582,5 +610,26 @@ describe("bindTaskReceiver", () => {
     expect(host._requestHandlers.get("tasks/list")).toBe(replacement);
     for (const handler of captured)
       await expect(handler({ params: {} })).rejects.toThrow("closed");
+  });
+
+  it("rolls back every replaced handler when installation fails midway", () => {
+    // A later setRequestHandler can throw after earlier handlers have already
+    // replaced the client's; with no binding returned, only the internal
+    // rollback can restore them.
+    class FailingHost extends Host {
+      override setRequestHandler(method: string, handler: Handler): void {
+        if (method === "tasks/cancel") throw new Error("install rejected");
+        super.setRequestHandler(method, handler);
+      }
+    }
+    const host = new FailingHost();
+    const previous = vi.fn(() => Promise.resolve({ previous: true }));
+    host._requestHandlers.set("tasks/get", previous);
+    expect(() => bindTaskReceiver(asClient(host), { methods: {} })).toThrow(
+      "install rejected",
+    );
+    expect(host._requestHandlers.get("tasks/get")).toBe(previous);
+    expect(host._requestHandlers.has("tasks/list")).toBe(false);
+    expect(host._requestHandlers.has("tasks/result")).toBe(false);
   });
 });

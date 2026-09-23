@@ -173,6 +173,9 @@ describe("V1 Zod wire schemas", () => {
           expect(schema.safeParse({ ...request, params: {} }).success).toBe(
             false,
           );
+          // Pinned V1 RequestId is string | integer: a fractional numeric
+          // id must fail every request codec, not round-trip.
+          expect(schema.safeParse({ ...request, id: 1.5 }).success).toBe(false);
         }),
       );
     }

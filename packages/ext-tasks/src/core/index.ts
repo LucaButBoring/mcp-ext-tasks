@@ -171,7 +171,16 @@ export function isJsonValue(value: unknown): value is JsonValue {
     visiting.delete(candidate);
     return valid;
   };
-  return visit(value);
+  // A public predicate over unknown must answer, not throw: Object.values
+  // and Reflect.getPrototypeOf execute user-controlled getter/proxy traps,
+  // and a throwing host object is by definition not a JSON value — without
+  // this, malformed host input escapes JsonValueCodec.parse() as an
+  // exception rather than a decode failure.
+  try {
+    return visit(value);
+  } catch {
+    return false;
+  }
 }
 
 /** Validates the package's recursive JSON data model without a schema-library dependency. */

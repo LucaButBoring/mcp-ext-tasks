@@ -172,7 +172,9 @@ function asTaskAugmentationRecord(
 
 function validateTaskAugmentation(request: unknown): void {
   const params = paramsOf(request);
-  // Absent is fine: without a prior handler, a plain request runs as a task.
+  // Absent is fine: the guarded install routes plain requests to the prior
+  // handler (or rejects them) before this validation runs, so an absent
+  // `task` here can only be an internal caller.
   // Object.hasOwn, because indexing types absent keys as JsonValue.
   if (!Object.hasOwn(params, "task")) return;
   // A present augmentation must be an object (the 2025-11-25 shape);
@@ -348,8 +350,19 @@ export function bindTaskReceiver(
     const guarded: Handler = (request, context) => {
       if (closed)
         return Promise.reject(new Error("Task receiver binding is closed"));
-      if (bypassTaskResultValidation && !hasTaskAugmentation(request) && prior)
-        return prior(request, context);
+      if (bypassTaskResultValidation && !hasTaskAugmentation(request)) {
+        if (prior) return prior(request, context);
+        // A plain request never allocates a task: 2025-11-25 requests task
+        // execution only via `params.task` presence, and answering an
+        // ordinary sampling/elicitation with a CreateTaskResult changes the
+        // method's result shape for non-Tasks callers. With no prior
+        // handler to delegate to, the request stays unhandled.
+        return Promise.reject(
+          new Error(
+            `This receiver only handles task-augmented ${method} requests`,
+          ),
+        );
+      }
       return handler(request, context);
     };
     // The SDK excludes legacy task methods from its public method union, but its
@@ -376,148 +389,169 @@ export function bindTaskReceiver(
     installed.set(method, installedHandler);
   };
 
-  for (const [method, callback] of callbacks)
-    install(
-      method,
-      (raw) => {
-        expire();
-        validateTaskAugmentation(raw);
-        const params = paramsOf(raw);
-        // The oldest terminal record is evicted at capacity, because the
-        // finite cap paired with unlimited default retention would otherwise
-        // permanently stop accepting work after maxTasks requests.
-        if (tasks.size >= maxTasks && !evictOldestTerminal())
-          throw new Error(
-            `Task receiver capacity of ${String(maxTasks)} retained tasks reached`,
-          );
-        const id = makeId();
-        if (tasks.has(id)) throw new Error(`Duplicate task identifier: ${id}`);
-        const createdTimestamp = now();
-        const createdAt = new Date(createdTimestamp).toISOString();
-        const taskTtlMs = typeof ttlMs === "function" ? ttlMs() : ttlMs;
-        nonNegativeInteger("ttlMs", taskTtlMs, true);
-        let resolve!: (value: Record<string, JsonValue>) => void;
-        let reject!: (error: unknown) => void;
-        const result = new Promise<Record<string, JsonValue>>((yes, no) => {
-          resolve = yes;
-          reject = no;
-        });
-        result.catch(() => undefined);
-        const record: TaskRecord = {
-          task: {
-            taskId: id,
-            status: "input_required",
-            createdAt,
-            lastUpdatedAt: createdAt,
-            ttl: taskTtlMs,
-            ...(pollIntervalMs === undefined || pollIntervalMs === null
-              ? {}
-              : { pollInterval: pollIntervalMs }),
-          },
-          method,
-          result,
-          resolve,
-          reject,
-          controller: new AbortController(),
-          expiresAt: taskTtlMs === null ? null : createdTimestamp + taskTtlMs,
-        };
-        tasks.set(id, record);
-        armExpiry(record);
+  const restoreInstalledHandlers = (): void => {
+    for (const [method, ours] of installed) {
+      if (internals._requestHandlers.get(method) !== ours) continue;
+      const prior = previous.get(method);
+      if (prior) internals._requestHandlers.set(method, prior);
+      else internals._requestHandlers.delete(method);
+    }
+  };
 
-        let callbackPromise: Promise<Record<string, JsonValue>>;
-        try {
-          callbackPromise = callback(
-            { method, params },
-            { taskId: id, signal: record.controller.signal },
-          );
-        } catch (error) {
-          callbackPromise = Promise.reject(
-            error instanceof Error ? error : new Error(String(error)),
-          );
-        }
-        void callbackPromise.then(
-          (value) => {
-            if (record.disposition !== undefined) return;
-            record.resolve(value);
-            transition(record, "completed", record.method);
-          },
-          (error: unknown) => {
-            if (record.disposition !== undefined) {
-              report(error, {
-                method: record.method,
-                taskId: id,
-                lateAfter: record.disposition,
-              });
-              return;
-            }
-            record.reject(error);
-            transition(
-              record,
-              "failed",
-              record.method,
-              error instanceof Error ? error.message : String(error),
+  // Installation is transactional: a later setRequestHandler can throw (for
+  // example, sampling declared while elicitation is not), and by then the
+  // earlier handlers have already replaced the client's — with no binding
+  // returned, nothing else could restore them.
+  try {
+    for (const [method, callback] of callbacks)
+      install(
+        method,
+        (raw) => {
+          expire();
+          validateTaskAugmentation(raw);
+          const params = paramsOf(raw);
+          // The oldest terminal record is evicted at capacity, because the
+          // finite cap paired with unlimited default retention would otherwise
+          // permanently stop accepting work after maxTasks requests.
+          if (tasks.size >= maxTasks && !evictOldestTerminal())
+            throw new Error(
+              `Task receiver capacity of ${String(maxTasks)} retained tasks reached`,
             );
-            report(error, { method: record.method, taskId: id });
-          },
-        );
-        return Promise.resolve({
-          task: snapshot(record),
-        } satisfies CreateTaskResultV1);
-      },
-      true,
-    );
+          const id = makeId();
+          if (tasks.has(id))
+            throw new Error(`Duplicate task identifier: ${id}`);
+          const createdTimestamp = now();
+          const createdAt = new Date(createdTimestamp).toISOString();
+          const taskTtlMs = typeof ttlMs === "function" ? ttlMs() : ttlMs;
+          nonNegativeInteger("ttlMs", taskTtlMs, true);
+          let resolve!: (value: Record<string, JsonValue>) => void;
+          let reject!: (error: unknown) => void;
+          const result = new Promise<Record<string, JsonValue>>((yes, no) => {
+            resolve = yes;
+            reject = no;
+          });
+          result.catch(() => undefined);
+          const record: TaskRecord = {
+            task: {
+              taskId: id,
+              status: "input_required",
+              createdAt,
+              lastUpdatedAt: createdAt,
+              ttl: taskTtlMs,
+              ...(pollIntervalMs === undefined || pollIntervalMs === null
+                ? {}
+                : { pollInterval: pollIntervalMs }),
+            },
+            method,
+            result,
+            resolve,
+            reject,
+            controller: new AbortController(),
+            expiresAt: taskTtlMs === null ? null : createdTimestamp + taskTtlMs,
+          };
+          tasks.set(id, record);
+          armExpiry(record);
 
-  install("tasks/list", (request) => {
-    expire();
-    const params = paramsOf(request);
-    const cursor = Object.hasOwn(params, "cursor") ? params.cursor : undefined;
-    if (cursor !== undefined && typeof cursor !== "string")
-      throw new Error("tasks/list cursor must be a string");
-    const records = [...tasks.values()];
-    let start = 0;
-    if (cursor !== undefined) {
-      const cursorIndex = records.findIndex(
-        (record) => record.task.taskId === cursor,
+          let callbackPromise: Promise<Record<string, JsonValue>>;
+          try {
+            callbackPromise = callback(
+              { method, params },
+              { taskId: id, signal: record.controller.signal },
+            );
+          } catch (error) {
+            callbackPromise = Promise.reject(
+              error instanceof Error ? error : new Error(String(error)),
+            );
+          }
+          void callbackPromise.then(
+            (value) => {
+              if (record.disposition !== undefined) return;
+              record.resolve(value);
+              transition(record, "completed", record.method);
+            },
+            (error: unknown) => {
+              if (record.disposition !== undefined) {
+                report(error, {
+                  method: record.method,
+                  taskId: id,
+                  lateAfter: record.disposition,
+                });
+                return;
+              }
+              record.reject(error);
+              transition(
+                record,
+                "failed",
+                record.method,
+                error instanceof Error ? error.message : String(error),
+              );
+              report(error, { method: record.method, taskId: id });
+            },
+          );
+          return Promise.resolve({
+            task: snapshot(record),
+          } satisfies CreateTaskResultV1);
+        },
+        true,
       );
-      if (cursorIndex < 0)
-        throw new Error("Invalid or stale tasks/list cursor");
-      start = cursorIndex + 1;
-    }
-    const page = records.slice(start, start + pageSize);
-    const hasMore = start + page.length < records.length;
-    const last = page.at(-1);
-    return Promise.resolve({
-      tasks: page.map(snapshot),
-      ...(hasMore && last !== undefined
-        ? { nextCursor: last.task.taskId }
-        : {}),
+
+    install("tasks/list", (request) => {
+      expire();
+      const params = paramsOf(request);
+      const cursor = Object.hasOwn(params, "cursor")
+        ? params.cursor
+        : undefined;
+      if (cursor !== undefined && typeof cursor !== "string")
+        throw new Error("tasks/list cursor must be a string");
+      const records = [...tasks.values()];
+      let start = 0;
+      if (cursor !== undefined) {
+        const cursorIndex = records.findIndex(
+          (record) => record.task.taskId === cursor,
+        );
+        if (cursorIndex < 0)
+          throw new Error("Invalid or stale tasks/list cursor");
+        start = cursorIndex + 1;
+      }
+      const page = records.slice(start, start + pageSize);
+      const hasMore = start + page.length < records.length;
+      const last = page.at(-1);
+      return Promise.resolve({
+        tasks: page.map(snapshot),
+        ...(hasMore && last !== undefined
+          ? { nextCursor: last.task.taskId }
+          : {}),
+      });
     });
-  });
-  install("tasks/get", (request) =>
-    Promise.resolve(snapshot(get(taskIdOf(request)))),
-  );
-  install("tasks/result", (request) => {
-    const record = get(taskIdOf(request));
-    // Returning the still-pending promise blocks the response until the task
-    // settles, because tasks/result is a blocking call per 2025-11-25; the
-    // promise already rejects on failure, cancellation, expiry, and close.
-    return record.result;
-  });
-  install("tasks/cancel", (request) => {
-    const record = get(taskIdOf(request));
-    if (
-      record.task.status === "working" ||
-      record.task.status === "input_required"
-    ) {
-      // Mark cancellation before aborting so re-entrant or immediately-settled
-      // callbacks cannot overwrite an accepted cancellation.
-      record.disposition = "cancel";
-      transition(record, "cancelled", "tasks/cancel");
-      record.controller.abort();
-      record.reject(new Error("Task was cancelled"));
-    }
-    return Promise.resolve(snapshot(record));
-  });
+    install("tasks/get", (request) =>
+      Promise.resolve(snapshot(get(taskIdOf(request)))),
+    );
+    install("tasks/result", (request) => {
+      const record = get(taskIdOf(request));
+      // Returning the still-pending promise blocks the response until the task
+      // settles, because tasks/result is a blocking call per 2025-11-25; the
+      // promise already rejects on failure, cancellation, expiry, and close.
+      return record.result;
+    });
+    install("tasks/cancel", (request) => {
+      const record = get(taskIdOf(request));
+      if (
+        record.task.status === "working" ||
+        record.task.status === "input_required"
+      ) {
+        // Mark cancellation before aborting so re-entrant or immediately-settled
+        // callbacks cannot overwrite an accepted cancellation.
+        record.disposition = "cancel";
+        transition(record, "cancelled", "tasks/cancel");
+        record.controller.abort();
+        record.reject(new Error("Task was cancelled"));
+      }
+      return Promise.resolve(snapshot(record));
+    });
+  } catch (error) {
+    restoreInstalledHandlers();
+    throw error;
+  }
 
   const requests: TaskReceiverCapabilities["requests"] = {
     ...(callbacks.has("sampling/createMessage")
@@ -534,12 +568,7 @@ export function bindTaskReceiver(
       closed = true;
       for (const record of tasks.values()) remove(record, "close");
       tasks.clear();
-      for (const [method, ours] of installed) {
-        if (internals._requestHandlers.get(method) !== ours) continue;
-        const prior = previous.get(method);
-        if (prior) internals._requestHandlers.set(method, prior);
-        else internals._requestHandlers.delete(method);
-      }
+      restoreInstalledHandlers();
     },
   };
 }

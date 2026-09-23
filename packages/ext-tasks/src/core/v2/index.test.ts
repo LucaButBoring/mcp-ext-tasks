@@ -901,6 +901,15 @@ describe("V2 runtime wire contracts", () => {
         },
       ),
     );
+    // Sparse arrays would slip through every() because it skips holes; the
+    // index loop must reject them rather than spread undefined into the
+    // readonly string[] result.
+    const sparseIds: unknown[] = [];
+    sparseIds.length = 2;
+    sparseIds[1] = "task";
+    expect(
+      readAcceptedTaskIdsV2({ notifications: { taskIds: sparseIds } }),
+    ).toEqual([]);
   });
 
   it("uses exact client and server capability envelopes", () => {

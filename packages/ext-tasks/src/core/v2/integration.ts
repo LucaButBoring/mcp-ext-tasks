@@ -175,8 +175,15 @@ export function readAcceptedTaskIdsV2(value: unknown): readonly string[] {
   const acceptedFilter = asObjectRecord(value);
   const notifications = asObjectRecord(acceptedFilter?.notifications);
   const acceptedTaskIds = notifications?.taskIds;
-  return Array.isArray(acceptedTaskIds) &&
-    acceptedTaskIds.every((taskId) => typeof taskId === "string")
-    ? [...acceptedTaskIds]
-    : [];
+  if (!Array.isArray(acceptedTaskIds)) return [];
+  // Iterate indices rather than every(), because every() skips sparse-array
+  // holes: [, "task"] would pass the check yet spread to [undefined, "task"],
+  // breaking the declared readonly string[] contract.
+  const taskIds: string[] = [];
+  for (let index = 0; index < acceptedTaskIds.length; index += 1) {
+    const taskId: unknown = acceptedTaskIds[index];
+    if (typeof taskId !== "string") return [];
+    taskIds.push(taskId);
+  }
+  return taskIds;
 }

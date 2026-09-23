@@ -57,6 +57,22 @@ describe("core runtime contracts", () => {
     class Exotic {
       readonly marker = "non-plain";
     }
+    // Hostile hosts must decode-fail, not throw: the predicate executes
+    // getter bodies (Object.values) and proxy traps (Reflect.getPrototypeOf).
+    const throwingGetter = Object.defineProperty({}, "boom", {
+      enumerable: true,
+      get() {
+        throw new Error("hostile getter");
+      },
+    });
+    const throwingProxy = new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error("hostile trap");
+        },
+      },
+    );
     const nonJsonValues: readonly unknown[] = [
       undefined,
       1n,
@@ -73,6 +89,8 @@ describe("core runtime contracts", () => {
       new Exotic(),
       Object.create({ inherited: true }) as object,
       /not-json/,
+      throwingGetter,
+      throwingProxy,
     ];
 
     for (const value of nonJsonValues) {

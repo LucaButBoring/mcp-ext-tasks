@@ -550,7 +550,7 @@ describe("manual task controller", () => {
       {
         port: new FakePort({
           generation: "v1",
-          capabilities: { requests: { tools: { call: {} } } },
+          capabilities: { requests: { tools: { call: {} } }, cancel: {} },
         }),
         payload: v1Task,
       },
@@ -569,6 +569,13 @@ describe("manual task controller", () => {
       await expect(controller.snapshot()).rejects.toThrow(
         "Task response identity mismatch: requested other-task",
       );
+      // The V1 cancel result is a Task snapshot too; a misrouted response
+      // must not mark this task locally cancelled. (V2 cancel returns a
+      // bare complete-operation envelope with no taskId to verify.)
+      if (port.taskCapabilities.generation === "v1")
+        await expect(controller.cancel()).rejects.toThrow(
+          "Task response identity mismatch: requested other-task",
+        );
       await session.close();
     }
   });

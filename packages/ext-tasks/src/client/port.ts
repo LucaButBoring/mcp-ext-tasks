@@ -311,11 +311,18 @@ export function createTaskRpc(
           signal,
         ),
       cancel: async (signal) => {
-        await dispatchTaskRpc(
-          options,
-          { method: "tasks/cancel", params: { taskId: options.taskId } },
-          CancelTaskResultV1Schema,
-          signal,
+        // The V1 cancel result is a Task snapshot; without the identity check
+        // a misrouted response would mark this execution locally cancelled
+        // even though the requested task was never acknowledged. (The V2
+        // cancel result is a bare complete-operation envelope with no taskId.)
+        assertTaskIdentity(
+          options.taskId,
+          await dispatchTaskRpc(
+            options,
+            { method: "tasks/cancel", params: { taskId: options.taskId } },
+            CancelTaskResultV1Schema,
+            signal,
+          ),
         );
       },
     };

@@ -207,6 +207,12 @@ function detachTimer(timer: ReturnType<typeof setTimeout>): void {
   if (typeof timer === "object" && "unref" in timer) timer.unref();
 }
 
+// One active binding per client (mirroring the client adapter's guard):
+// with two bindings, closing A and then B would restore A's already-closed
+// handlers, leaving every task method permanently rejecting instead of the
+// client's original handlers.
+const boundClients = new WeakSet<Client>();
+
 /**
  * Binds task-augmented receiver requests to an SDK Client and owns their task
  * lifecycle. The Client creates JSON-RPC envelopes for emitted notifications.
@@ -215,6 +221,10 @@ export function bindTaskReceiver(
   client: Client,
   options: TaskReceiverOptions,
 ): TaskReceiverBinding {
+  if (boundClients.has(client))
+    throw new TypeError(
+      "An ext-tasks receiver binding is already active for this Client",
+    );
   const internals = clientInternals(client);
   const now = Date.now;
   const makeId = options.createTaskId ?? createDefaultTaskId;
@@ -552,6 +562,7 @@ export function bindTaskReceiver(
     restoreInstalledHandlers();
     throw error;
   }
+  boundClients.add(client);
 
   const requests: TaskReceiverCapabilities["requests"] = {
     ...(callbacks.has("sampling/createMessage")
@@ -566,6 +577,7 @@ export function bindTaskReceiver(
     close() {
       if (closed) return;
       closed = true;
+      boundClients.delete(client);
       for (const record of tasks.values()) remove(record, "close");
       tasks.clear();
       restoreInstalledHandlers();

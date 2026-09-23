@@ -328,6 +328,8 @@ describe("V2 runtime wire contracts", () => {
       { maxTokens: 10 },
       { messages: [{ role: "user" }], maxTokens: 10 },
       { messages: [], maxTokens: 1.5 },
+      // includeContext is a pinned enum, not any string (round-17 finding).
+      { messages: [], maxTokens: 10, includeContext: "someServers" },
     ])
       expect(
         InputRequestsV2Schema.safeParse({
@@ -1004,6 +1006,25 @@ describe("V2 runtime wire contracts", () => {
         }),
       ).toBe(false);
     }
+    // The guard narrows the WHOLE envelope type, so an unrelated extension
+    // whose value is not JsonValue must fail even when the Tasks entry is
+    // valid (round-17 finding).
+    expect(
+      hasTaskServerCapabilityV2({
+        extensions: {
+          "io.modelcontextprotocol/tasks": {},
+          other: undefined,
+        },
+      }),
+    ).toBe(false);
+    expect(
+      hasTaskServerCapabilityV2({
+        extensions: {
+          "io.modelcontextprotocol/tasks": {},
+          "example.com/other": { enabled: true },
+        },
+      }),
+    ).toBe(true);
   });
 
   it("merges the tasks capability into existing client capabilities", () => {

@@ -6,6 +6,7 @@ import {
   DetailedTaskV2Schema,
   GetTaskRequestV2Schema,
   TasksExtensionCapabilityV2Schema,
+  ServerTaskCapabilityEnvelopeV2Schema,
   TaskStatusNotificationV2Schema,
   TaskV2Schema,
   UpdateTaskRequestV2Schema,
@@ -114,7 +115,14 @@ export function hasTaskServerCapabilityV2(
   value: unknown,
 ): value is ServerTaskCapabilityEnvelopeV2 {
   const serverCapabilities = asObjectRecord(value);
-  return hasOwnTaskExtension(serverCapabilities?.extensions);
+  // Validate the whole envelope, not only the Tasks entry: the narrowed type
+  // claims every extension value is JsonValue, so an envelope carrying an
+  // unrelated non-JSON extension value (e.g. `other: undefined`) must not
+  // pass the guard.
+  return (
+    hasOwnTaskExtension(serverCapabilities?.extensions) &&
+    parsed(ServerTaskCapabilityEnvelopeV2Schema, value)
+  );
 }
 
 /**

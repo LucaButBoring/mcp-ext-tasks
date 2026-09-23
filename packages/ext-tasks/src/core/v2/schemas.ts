@@ -226,7 +226,9 @@ const CreateMessageRequestParamsV2Schema = openObject({
   messages: z.array(SamplingMessageV2Schema),
   maxTokens: z.int(),
   systemPrompt: z.string().optional(),
-  includeContext: z.string().optional(),
+  // Pinned enum, not any string: malformed sampling input would otherwise
+  // pass the exported wire schema and reach application handlers as valid.
+  includeContext: z.enum(["allServers", "none", "thisServer"]).optional(),
   temperature: z.number().optional(),
   stopSequences: z.array(z.string()).optional(),
   metadata: JsonObjectSchema.optional(),

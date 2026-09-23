@@ -632,4 +632,36 @@ describe("bindTaskReceiver", () => {
     expect(host._requestHandlers.has("tasks/list")).toBe(false);
     expect(host._requestHandlers.has("tasks/result")).toBe(false);
   });
+
+  it("rejects a second active binding and allows rebinding after close", () => {
+    // Two active bindings would corrupt handler restoration: closing A and
+    // then B restores A's already-closed handlers, leaving every task method
+    // permanently rejecting instead of the client's original handlers.
+    const host = new Host();
+    const client = asClient(host);
+    const first = bindTaskReceiver(client, { methods: {} });
+    expect(() => bindTaskReceiver(client, { methods: {} })).toThrow(
+      "already active for this Client",
+    );
+    first.close();
+    const second = bindTaskReceiver(client, { methods: {} });
+    second.close();
+    // A failed install never marks the client bound.
+    class FailingHost extends Host {
+      override setRequestHandler(method: string, handler: Handler): void {
+        if (method === "tasks/cancel") throw new Error("install rejected");
+        super.setRequestHandler(method, handler);
+      }
+    }
+    const failingHost = new FailingHost();
+    const failingClient = asClient(failingHost);
+    expect(() => bindTaskReceiver(failingClient, { methods: {} })).toThrow(
+      "install rejected",
+    );
+    failingHost._requestHandlers.clear();
+    // rebinding after the failure must not hit the active-binding guard
+    expect(() =>
+      bindTaskReceiver(asClient(failingHost), { methods: {} }),
+    ).toThrow("install rejected");
+  });
 });

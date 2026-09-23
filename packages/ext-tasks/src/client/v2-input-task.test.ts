@@ -262,11 +262,18 @@ describe("V2 input and task behavior", () => {
                         kind === "sampling"
                           ? {
                               method: "sampling/createMessage",
-                              params: { key },
+                              params: { key, messages: [], maxTokens: 1 },
                             }
                           : kind === "roots"
                             ? { method: "roots/list" }
-                            : { method: "elicitation/create", params: { key } },
+                            : {
+                                method: "elicitation/create",
+                                params: {
+                                  key,
+                                  message: "m",
+                                  requestedSchema: { type: "object" },
+                                },
+                              },
                       ]),
                     ),
                   }),
@@ -404,7 +411,10 @@ describe("V2 input and task behavior", () => {
                 same:
                   getCalls <= 2
                     ? { method: "roots/list" }
-                    : { method: "sampling/createMessage", params: {} },
+                    : {
+                        method: "sampling/createMessage",
+                        params: { messages: [], maxTokens: 1 },
+                      },
               },
             }),
           };
@@ -485,7 +495,13 @@ describe("V2 input and task behavior", () => {
               same:
                 getCalls === 1
                   ? { method: "roots/list" }
-                  : { method: "elicitation/create", params: {} },
+                  : {
+                      method: "elicitation/create",
+                      params: {
+                        message: "m",
+                        requestedSchema: { type: "object" },
+                      },
+                    },
             },
           }),
         };
@@ -551,8 +567,17 @@ describe("V2 input and task behavior", () => {
                   lastUpdatedAt: "b",
                   ttlMs: null,
                   inputRequests: {
-                    elicit: { method: "elicitation/create", params: {} },
-                    sample: { method: "sampling/createMessage", params: {} },
+                    elicit: {
+                      method: "elicitation/create",
+                      params: {
+                        message: "m",
+                        requestedSchema: { type: "object" },
+                      },
+                    },
+                    sample: {
+                      method: "sampling/createMessage",
+                      params: { messages: [], maxTokens: 1 },
+                    },
                     roots: { method: "roots/list" },
                   },
                 }
@@ -633,7 +658,10 @@ describe("V2 input and task behavior", () => {
             lastUpdatedAt: "b",
             ttlMs: null,
             inputRequests: {
-              key: { method: "elicitation/create", params: {} },
+              key: {
+                method: "elicitation/create",
+                params: { message: "m", requestedSchema: { type: "object" } },
+              },
             },
           }),
         };

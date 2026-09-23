@@ -102,6 +102,24 @@ describe("V2 runtime wire contracts", () => {
           role: "assistant",
         }).success,
       ).toBe(false);
+    // _meta is a declared metadata object, not catchall JSON: `_meta: true`
+    // must fail rather than be submitted through tasks/update (round-15).
+    expect(
+      CreateMessageResultV2Schema.safeParse({
+        content: { type: "text", text: "x" },
+        model: "test-model",
+        role: "assistant",
+        _meta: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      CreateMessageResultV2Schema.safeParse({
+        content: { type: "text", text: "x" },
+        model: "test-model",
+        role: "assistant",
+        _meta: { trace: "t" },
+      }).success,
+    ).toBe(true);
   });
 
   it("accepts every valid base Task and rejects missing required fields, invalid integers, and statuses", () => {
@@ -251,6 +269,15 @@ describe("V2 runtime wire contracts", () => {
   });
 
   it("strictly decodes input request and response maps", () => {
+    // Params follow the pinned request shapes: sampling requires
+    // messages + maxTokens, elicitation is a form/url mode union.
+    const samplingMessageArb = fc.record({
+      role: fc.constantFrom("user" as const, "assistant" as const),
+      content: fc.record({
+        type: fc.constant("text" as const),
+        text: fc.string(),
+      }),
+    });
     fc.assert(
       fc.property(
         fc.dictionary(
@@ -259,11 +286,25 @@ describe("V2 runtime wire contracts", () => {
             fc.record({ method: fc.constant("roots/list" as const) }),
             fc.record({
               method: fc.constant("sampling/createMessage" as const),
-              params: fc.dictionary(fc.string(), fc.jsonValue()),
+              params: fc.record({
+                messages: fc.array(samplingMessageArb),
+                maxTokens: fc.integer({ min: 1 }),
+              }),
             }),
             fc.record({
               method: fc.constant("elicitation/create" as const),
-              params: fc.dictionary(fc.string(), fc.jsonValue()),
+              params: fc.record({
+                message: fc.string(),
+                requestedSchema: fc.constant({ type: "object" }),
+              }),
+            }),
+            fc.record({
+              method: fc.constant("elicitation/create" as const),
+              params: fc.record({
+                mode: fc.constant("url" as const),
+                message: fc.string(),
+                url: fc.webUrl(),
+              }),
             }),
           ),
         ),
@@ -279,6 +320,31 @@ describe("V2 runtime wire contracts", () => {
         key: { method: "unknown", params: {} },
       }).success,
     ).toBe(false);
+    // Malformed params must fail even when the method is recognized:
+    // a permissive record here would hand invalid task input to handlers.
+    for (const params of [
+      {},
+      { messages: [] },
+      { maxTokens: 10 },
+      { messages: [{ role: "user" }], maxTokens: 10 },
+      { messages: [], maxTokens: 1.5 },
+    ])
+      expect(
+        InputRequestsV2Schema.safeParse({
+          key: { method: "sampling/createMessage", params },
+        }).success,
+      ).toBe(false);
+    for (const params of [
+      {},
+      { message: "m" },
+      { mode: "url", message: "m" },
+      { mode: "form", message: "m" },
+    ])
+      expect(
+        InputRequestsV2Schema.safeParse({
+          key: { method: "elicitation/create", params },
+        }).success,
+      ).toBe(false);
     fc.assert(
       fc.property(
         fc.dictionary(

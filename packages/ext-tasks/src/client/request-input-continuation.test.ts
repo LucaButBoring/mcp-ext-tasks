@@ -24,7 +24,10 @@ describe("request-scoped input-required continuation", () => {
             inputRequests: {
               choice: {
                 method: "elicitation/create",
-                params: { message: "pick" },
+                params: {
+                  message: "pick",
+                  requestedSchema: { type: "object" },
+                },
               },
             },
           },
@@ -155,7 +158,10 @@ describe("request-scoped input-required continuation", () => {
       result: {
         resultType: "input_required",
         inputRequests: {
-          prompt: { method: "elicitation/create", params: {} },
+          prompt: {
+            method: "elicitation/create",
+            params: { message: "m", requestedSchema: { type: "object" } },
+          },
         },
       },
     };

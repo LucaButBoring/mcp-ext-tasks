@@ -103,11 +103,27 @@ export const ToolV1Schema = z.object({
 });
 export type ToolV1 = z.output<typeof ToolV1Schema>;
 
+// Declared content-block fields are modeled per the pinned 2025-11-25 shapes
+// (annotations, _meta, and the resource-link descriptors) rather than left
+// to the catchall, so malformed values like `annotations: true` fail decode;
+// the catchall covers only genuinely unknown extensions.
+const AnnotationsV1Schema = z
+  .object({
+    audience: z.array(z.enum(["user", "assistant"])).optional(),
+    priority: z.number().min(0).max(1).optional(),
+    lastModified: z.string().optional(),
+  })
+  .catchall(JsonValueSchema);
+const ContentBaseShapeV1 = {
+  annotations: AnnotationsV1Schema.optional(),
+  _meta: JsonRecordSchema.optional(),
+};
 const TextContentBlockV1Schema = z
-  .object({ type: z.literal("text"), text: z.string() })
+  .object({ ...ContentBaseShapeV1, type: z.literal("text"), text: z.string() })
   .catchall(JsonValueSchema);
 const MediaContentBlockV1Schema = z
   .object({
+    ...ContentBaseShapeV1,
     type: z.enum(["image", "audio"]),
     data: z.string(),
     mimeType: z.string(),
@@ -115,22 +131,39 @@ const MediaContentBlockV1Schema = z
   .catchall(JsonValueSchema);
 const ResourceLinkContentBlockV1Schema = z
   .object({
+    ...ContentBaseShapeV1,
     type: z.literal("resource_link"),
     name: z.string(),
     uri: z.string(),
+    title: z.string().optional(),
+    description: z.string().optional(),
+    mimeType: z.string().optional(),
+    size: z.int().optional(),
+    icons: z.array(IconV1Schema).optional(),
   })
   .catchall(JsonValueSchema);
 // The pinned V1 wire schema requires embedded resource contents to be text
 // (uri + text) or blob (uri + blob); an unconstrained record would let a
 // malformed `resource: {}` decode as valid server output.
 const TextResourceContentsV1Schema = z
-  .object({ uri: z.string(), text: z.string() })
+  .object({
+    uri: z.string(),
+    text: z.string(),
+    mimeType: z.string().optional(),
+    _meta: JsonRecordSchema.optional(),
+  })
   .catchall(JsonValueSchema);
 const BlobResourceContentsV1Schema = z
-  .object({ uri: z.string(), blob: z.string() })
+  .object({
+    uri: z.string(),
+    blob: z.string(),
+    mimeType: z.string().optional(),
+    _meta: JsonRecordSchema.optional(),
+  })
   .catchall(JsonValueSchema);
 const EmbeddedResourceContentBlockV1Schema = z
   .object({
+    ...ContentBaseShapeV1,
     type: z.literal("resource"),
     resource: z.union([
       TextResourceContentsV1Schema,

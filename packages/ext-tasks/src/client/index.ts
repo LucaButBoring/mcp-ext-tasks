@@ -29,6 +29,7 @@ export type {
   ApplicationInputResult,
   ApplicationListRootsResult,
   ApplicationRoot,
+  ApplicationSamplingContentBlock,
   InputCorrelationCandidate,
   InputCorrelationFailureReason,
   ResolvedInputExchangeContext,

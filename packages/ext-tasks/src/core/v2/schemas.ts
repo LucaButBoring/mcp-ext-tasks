@@ -209,17 +209,60 @@ const ErrorV2Schema = z.object({
   data: JsonValueSchema.optional(),
 });
 
+// Input request params are validated against the pinned 2026-07-28 request
+// shapes, not as generic records: these schemas also back
+// `InputRequestsV2Schema`, so a permissive params type would hand malformed
+// task input (e.g. a sampling request without messages/maxTokens) to
+// application handlers as valid.
+const SamplingMessageV2Schema = openObject({
+  role: z.enum(["user", "assistant"]),
+  content: z.union([
+    SamplingMessageContentBlockV2Schema,
+    z.array(SamplingMessageContentBlockV2Schema),
+  ]),
+  _meta: MetaSchema.optional(),
+});
+const CreateMessageRequestParamsV2Schema = openObject({
+  messages: z.array(SamplingMessageV2Schema),
+  maxTokens: z.int(),
+  systemPrompt: z.string().optional(),
+  includeContext: z.string().optional(),
+  temperature: z.number().optional(),
+  stopSequences: z.array(z.string()).optional(),
+  metadata: JsonObjectSchema.optional(),
+  modelPreferences: JsonObjectSchema.optional(),
+  toolChoice: JsonObjectSchema.optional(),
+  tools: z.array(JsonObjectSchema).optional(),
+  _meta: MetaSchema.optional(),
+});
 const CreateMessageRequestV2Schema = z.object({
   method: z.literal("sampling/createMessage"),
-  params: JsonObjectSchema,
+  params: CreateMessageRequestParamsV2Schema,
 });
 const ListRootsRequestV2Schema = z.object({
   method: z.literal("roots/list"),
   params: JsonObjectSchema.optional(),
 });
+// Elicitation params are a form/url mode union; `mode` is optional (and
+// defaults to form) on the form variant but required on the url variant.
+const ElicitRequestFormParamsV2Schema = openObject({
+  mode: z.literal("form").optional(),
+  message: z.string(),
+  requestedSchema: JsonObjectSchema,
+  _meta: MetaSchema.optional(),
+});
+const ElicitRequestUrlParamsV2Schema = openObject({
+  mode: z.literal("url"),
+  message: z.string(),
+  url: z.string(),
+  _meta: MetaSchema.optional(),
+});
 const ElicitRequestV2Schema = z.object({
   method: z.literal("elicitation/create"),
-  params: JsonObjectSchema,
+  params: z.union([
+    ElicitRequestFormParamsV2Schema,
+    ElicitRequestUrlParamsV2Schema,
+  ]),
 });
 const InputRequestV2Schema = z.discriminatedUnion("method", [
   CreateMessageRequestV2Schema,
@@ -250,6 +293,9 @@ const CreateMessageResultV2Schema = openObject({
   model: z.string(),
   role: z.enum(["user", "assistant"]),
   stopReason: z.string().optional(),
+  // Declared, not left to the catchall: `_meta: true` must fail like every
+  // other V2 result schema rather than be submitted through tasks/update.
+  _meta: MetaSchema.optional(),
 });
 // Roots require a string `uri` (file:// for now) with optional `name`/_meta;
 // accepting arbitrary JSON here would let invalid handler output reach

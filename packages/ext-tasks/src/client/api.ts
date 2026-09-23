@@ -172,12 +172,45 @@ export interface ApplicationElicitResult {
   readonly content?: Readonly<Record<string, ApplicationElicitContentValue>>;
 }
 
+/**
+ * Generation-neutral sampling content blocks, mirroring the wire union the
+ * runtime response validator enforces (`CreateMessageResult.content`). Typing
+ * `content` as arbitrary JSON would let type-correct handlers produce
+ * payloads that fail only at response encoding — the same reasoning as
+ * `ApplicationElicitContentValue` above. Each variant keeps an open record
+ * so annotations, `_meta`, and future extension fields still type-check.
+ */
+export type ApplicationSamplingContentBlock = Readonly<
+  Record<string, JsonValue>
+> &
+  (
+    | { readonly type: "text"; readonly text: string }
+    | {
+        readonly type: "image" | "audio";
+        readonly data: string;
+        readonly mimeType: string;
+      }
+    | {
+        readonly type: "tool_use";
+        readonly id: string;
+        readonly name: string;
+        readonly input: Readonly<Record<string, JsonValue>>;
+      }
+    | {
+        readonly type: "tool_result";
+        readonly toolUseId: string;
+        readonly content: readonly Readonly<Record<string, JsonValue>>[];
+      }
+  );
+
 export type ApplicationCreateMessageResult = Readonly<
   Record<string, JsonValue>
 > & {
   readonly model: string;
   readonly role: "assistant" | "user";
-  readonly content: JsonValue;
+  readonly content:
+    | ApplicationSamplingContentBlock
+    | readonly ApplicationSamplingContentBlock[];
 };
 
 /**

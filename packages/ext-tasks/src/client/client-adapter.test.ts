@@ -154,7 +154,10 @@ describe("Client adapter", () => {
       resultType: "input_required",
       requestState: "manual-state",
       inputRequests: {
-        prompt: { method: "elicitation/create", params: { message: "Choose" } },
+        prompt: {
+          method: "elicitation/create",
+          params: { message: "Choose", requestedSchema: { type: "object" } },
+        },
       },
     });
     const controller = new AbortController();

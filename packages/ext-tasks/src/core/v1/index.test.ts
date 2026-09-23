@@ -293,6 +293,41 @@ describe("V1 Zod wire schemas", () => {
         ],
       }).success,
     ).toBe(true);
+    // Declared content fields are typed per the pinned shapes rather than
+    // caught by the extension catchall: annotations must be an object with
+    // typed fields and _meta must be an object (round-15 finding).
+    expect(
+      CallToolResultV1Schema.safeParse({
+        content: [{ type: "text", text: "x", annotations: true }],
+      }).success,
+    ).toBe(false);
+    expect(
+      CallToolResultV1Schema.safeParse({
+        content: [{ type: "text", text: "x", annotations: { priority: 2 } }],
+      }).success,
+    ).toBe(false);
+    expect(
+      CallToolResultV1Schema.safeParse({
+        content: [{ type: "text", text: "x", _meta: "nope" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      CallToolResultV1Schema.safeParse({
+        content: [{ type: "resource_link", name: "n", uri: "u", size: 1.5 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      CallToolResultV1Schema.safeParse({
+        content: [
+          {
+            type: "text",
+            text: "x",
+            annotations: { audience: ["user"], priority: 0.5 },
+            _meta: { trace: "t" },
+          },
+        ],
+      }).success,
+    ).toBe(true);
     expect(CallToolResultV1Schema.safeParse({}).success).toBe(false);
   });
 

@@ -530,11 +530,46 @@ describe("manual task controller", () => {
       const pending = session.task(taskId("close")).snapshot();
       await Promise.resolve();
       await session.close();
+      // Echo the requested id so this measures close behavior, not the
+      // task-identity check.
       resolveDispatch?.({
         kind: "result",
-        result: asJson(v2CompletedTask),
+        result: asJson({ ...v2CompletedTask, taskId: "close" }),
       });
       await expect(pending).rejects.toThrow("Task-enabled session is closed");
+    }
+  });
+
+  it("rejects tasks/get responses that belong to a different task", async () => {
+    // Structural validation alone would accept a valid snapshot for another
+    // task, letting this controller expose task B's state under task A's id.
+    // Literal capability objects per generation: the port capability type is
+    // a discriminated union, so a shared `generation` variable would not
+    // narrow.
+    const ports = [
+      {
+        port: new FakePort({
+          generation: "v1",
+          capabilities: { requests: { tools: { call: {} } } },
+        }),
+        payload: v1Task,
+      },
+      {
+        port: new FakePort({ generation: "v2", capabilities: {} }),
+        payload: v2CompletedTask,
+      },
+    ];
+    for (const { port, payload } of ports) {
+      port.response = {
+        kind: "result",
+        result: asJson(payload),
+      };
+      const session = withTasks(port, { tools });
+      const controller = session.task(taskId("other-task"));
+      await expect(controller.snapshot()).rejects.toThrow(
+        "Task response identity mismatch: requested other-task",
+      );
+      await session.close();
     }
   });
 

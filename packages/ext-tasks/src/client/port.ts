@@ -263,6 +263,20 @@ async function dispatchTaskRpc<T>(
   return parseResult(schema, responseResult(response));
 }
 
+// Structural schema validation alone would accept a valid task snapshot for
+// a DIFFERENT task: a misrouted or malformed response could then settle an
+// execution/controller with another task's state and result.
+function assertTaskIdentity<T extends { readonly taskId: string }>(
+  expected: string,
+  result: T,
+): T {
+  if (result.taskId !== expected)
+    throw new Error(
+      `Task response identity mismatch: requested ${expected}, received ${result.taskId}`,
+    );
+  return result;
+}
+
 /** Creates a task-bound RPC service that owns generation-specific wire details. */
 export function createTaskRpc(
   generation: "v1",
@@ -279,12 +293,15 @@ export function createTaskRpc(
   if (generation === "v1") {
     return {
       generation,
-      get: (signal) =>
-        dispatchTaskRpc(
-          options,
-          { method: "tasks/get", params: { taskId: options.taskId } },
-          GetTaskResultV1Schema,
-          signal,
+      get: async (signal) =>
+        assertTaskIdentity(
+          options.taskId,
+          await dispatchTaskRpc(
+            options,
+            { method: "tasks/get", params: { taskId: options.taskId } },
+            GetTaskResultV1Schema,
+            signal,
+          ),
         ),
       result: (codec, signal) =>
         dispatchTaskRpc(
@@ -309,13 +326,16 @@ export function createTaskRpc(
   const context = v2TaskDispatchContext(options);
   return {
     generation,
-    get: (signal) =>
-      dispatchTaskRpc(
-        options,
-        { method: "tasks/get", params: params({ taskId: options.taskId }) },
-        GetTaskResultV2Schema,
-        signal,
-        context,
+    get: async (signal) =>
+      assertTaskIdentity(
+        options.taskId,
+        await dispatchTaskRpc(
+          options,
+          { method: "tasks/get", params: params({ taskId: options.taskId }) },
+          GetTaskResultV2Schema,
+          signal,
+          context,
+        ),
       ),
     cancel: async (signal) => {
       await dispatchTaskRpc(

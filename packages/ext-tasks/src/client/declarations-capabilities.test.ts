@@ -109,6 +109,48 @@ describe("declarations and capabilities", () => {
     await session.close();
   });
 
+  it("rejects non-string and repeated tool-list pagination cursors", async () => {
+    // A non-string nextCursor treated as end-of-list would silently truncate
+    // discovery; a repeated cursor would issue tools/list forever.
+    const invalidCursorPort = new FakePort({
+      generation: "v1",
+      capabilities: {},
+    });
+    invalidCursorPort.dispatchHandler = () =>
+      Promise.resolve({
+        kind: "result" as const,
+        result: asJson({ tools: [], nextCursor: 42 }),
+      });
+    const invalidCursorSession = withTasks(invalidCursorPort);
+    await expect(invalidCursorSession.callTool("x")).rejects.toThrow(
+      "tools/list nextCursor must be a string",
+    );
+    await invalidCursorSession.close();
+
+    const loopingPort = new FakePort({ generation: "v1", capabilities: {} });
+    loopingPort.dispatchHandler = () =>
+      Promise.resolve({
+        kind: "result" as const,
+        result: asJson({ tools: [], nextCursor: "same-page" }),
+      });
+    const loopingSession = withTasks(loopingPort);
+    await expect(loopingSession.callTool("x")).rejects.toThrow(
+      "tools/list repeated pagination cursor: same-page",
+    );
+    // Each discovery sweep stops at the repeat (first page + one cursored
+    // fetch, retried once by the refresh layer) instead of looping forever.
+    expect(
+      loopingPort.requests.filter(
+        (request) => expectRecord(request).method === "tools/list",
+      ).length,
+    ).toBeLessThanOrEqual(4);
+    expect(loopingPort.requests).toContainEqual({
+      method: "tools/list",
+      params: { cursor: "same-page" },
+    });
+    await loopingSession.close();
+  });
+
   it("ignores stale tool-list refreshes", async () => {
     const port = new FakePort({
       generation: "v1",

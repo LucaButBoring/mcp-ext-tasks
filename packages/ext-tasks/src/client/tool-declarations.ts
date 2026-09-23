@@ -109,6 +109,10 @@ export class ManagedToolDeclarations implements ToolDeclarationProvider {
     const controller = new AbortController();
     this.refreshController = controller;
     const decoded = new Map<string, ToolDeclaration>();
+    // Malformed pagination must fail deterministically: a non-string
+    // nextCursor treated as end-of-list would silently truncate discovery,
+    // and a repeated cursor would issue tools/list forever.
+    const seenCursors = new Set<string>();
     let cursor: string | undefined;
     do {
       const response = await this.port.dispatch(
@@ -147,8 +151,19 @@ export class ManagedToolDeclarations implements ToolDeclarationProvider {
           throw new Error(`Duplicate tool declaration: ${declaration.name}`);
         decoded.set(declaration.name, declaration);
       }
-      cursor =
-        typeof result.nextCursor === "string" ? result.nextCursor : undefined;
+      const nextCursor = Object.hasOwn(result, "nextCursor")
+        ? result.nextCursor
+        : undefined;
+      if (nextCursor !== undefined && typeof nextCursor !== "string")
+        throw new Error("tools/list nextCursor must be a string");
+      if (nextCursor !== undefined) {
+        if (seenCursors.has(nextCursor))
+          throw new Error(
+            `tools/list repeated pagination cursor: ${nextCursor}`,
+          );
+        seenCursors.add(nextCursor);
+      }
+      cursor = nextCursor;
     } while (cursor !== undefined);
     if (sequence === this.refreshSequence) this.tools = decoded;
   }

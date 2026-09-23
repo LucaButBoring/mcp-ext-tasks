@@ -72,7 +72,7 @@ Create the session with the same `endpointId` used by the source execution, then
 const recovered = await session.resumeTask(await taskStore.load());
 ```
 
-An unknown task has expired or was removed by the server. `TaskRecoveryOwnershipError` indicates an endpoint, generation, operation, or local ownership mismatch.
+An unknown task has expired or was removed by the server. `TaskRecoveryOwnershipError` means the task already has an active local owner (a live execution or controller for the same task identity); endpoint, generation, and unsupported-operation mismatches reject with ordinary `Error`s naming the mismatch.
 
 Use `execution.handoff((reference) => taskStore.save(reference))` when transferring a live task to durable storage.
 

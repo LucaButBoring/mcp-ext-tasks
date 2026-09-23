@@ -66,6 +66,30 @@ export const ToolExecutionV1Schema = z.object({
 });
 export type ToolExecutionV1 = z.output<typeof ToolExecutionV1Schema>;
 
+// Known fields typed per the pinned schemas, with a catchall for forward
+// compatibility, so malformed declarations (readOnlyHint: "yes", icon
+// without a string src) fail discovery instead of passing as valid tools.
+export const ToolAnnotationsV1Schema = z
+  .object({
+    title: z.string().optional(),
+    readOnlyHint: z.boolean().optional(),
+    destructiveHint: z.boolean().optional(),
+    idempotentHint: z.boolean().optional(),
+    openWorldHint: z.boolean().optional(),
+  })
+  .catchall(JsonValueSchema);
+export type ToolAnnotationsV1 = z.output<typeof ToolAnnotationsV1Schema>;
+
+export const IconV1Schema = z
+  .object({
+    src: z.string(),
+    mimeType: z.string().optional(),
+    sizes: z.array(z.string()).optional(),
+    theme: z.enum(["dark", "light"]).optional(),
+  })
+  .catchall(JsonValueSchema);
+export type IconV1 = z.output<typeof IconV1Schema>;
+
 export const ToolV1Schema = z.object({
   name: z.string(),
   title: z.string().optional(),
@@ -73,8 +97,8 @@ export const ToolV1Schema = z.object({
   inputSchema: ObjectJsonSchema,
   outputSchema: ObjectJsonSchema.optional(),
   execution: ToolExecutionV1Schema.optional(),
-  annotations: JsonRecordSchema.optional(),
-  icons: z.array(JsonRecordSchema).optional(),
+  annotations: ToolAnnotationsV1Schema.optional(),
+  icons: z.array(IconV1Schema).optional(),
   _meta: JsonRecordSchema.optional(),
 });
 export type ToolV1 = z.output<typeof ToolV1Schema>;

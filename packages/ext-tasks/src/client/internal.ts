@@ -214,12 +214,17 @@ export function projectToolForGeneration(
       : { description: declaration.description }),
     inputSchema,
     ...(outputSchema === undefined ? {} : { outputSchema }),
+    // Single casts: the neutral declaration deliberately keeps annotations and
+    // icons as loose JSON for forward compatibility, while the generated tool
+    // types now mirror the pinned wire schemas. Wire-sourced declarations were
+    // already validated against those schemas at discovery, and this projected
+    // tool is consumed locally (task-support hints), never dispatched.
     ...(declaration.annotations === undefined
       ? {}
-      : { annotations: declaration.annotations }),
+      : { annotations: declaration.annotations as ToolV1["annotations"] }),
     ...(declaration.icons === undefined
       ? {}
-      : { icons: [...declaration.icons] }),
+      : { icons: [...declaration.icons] as ToolV1["icons"] }),
     ...(declaration.metadata === undefined
       ? {}
       : { _meta: declaration.metadata }),

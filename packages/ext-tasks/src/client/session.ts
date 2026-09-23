@@ -156,6 +156,17 @@ class PortTaskEnabledSession<
   ) {
     this.endpointId = port.endpointId as TaskSessionEndpointId;
     this.capabilities = semanticCapabilities(port.taskCapabilities);
+    // Validated here, not per call: the cap is a session-wide public option,
+    // and unvalidated values fail silently (1.5 allows two rounds, NaN
+    // disables the cap, negatives reject even the first round).
+    const maxInputRounds = options.maxInputRounds;
+    if (
+      maxInputRounds !== undefined &&
+      (!Number.isSafeInteger(maxInputRounds) || maxInputRounds < 0)
+    )
+      throw new RangeError(
+        "maxInputRounds must be a non-negative safe integer",
+      );
     const reportError = (error: Error): void => {
       try {
         this.options.onError?.(error);

@@ -337,6 +337,55 @@ describe("V1 Zod wire schemas", () => {
   });
 
   it("parses tools, task calls, and nested capabilities", () => {
+    // Annotations and icons follow the pinned ToolAnnotations/Icon shapes:
+    // typed known fields plus arbitrary extra JSON for forward compatibility.
+    // Extras drop known-field names so a generated extra cannot collide with
+    // an omitted optional key at the wrong type.
+    const withExtras = (
+      known: Record<string, unknown>,
+      extra: Record<string, unknown>,
+      knownKeys: readonly string[],
+    ): Record<string, unknown> => ({
+      ...Object.fromEntries(
+        Object.entries(extra).filter(([key]) => !knownKeys.includes(key)),
+      ),
+      ...known,
+    });
+    const annotationKeys = [
+      "title",
+      "readOnlyHint",
+      "destructiveHint",
+      "idempotentHint",
+      "openWorldHint",
+    ];
+    const annotationsArb = fc
+      .record(
+        {
+          title: fc.string(),
+          readOnlyHint: fc.boolean(),
+          destructiveHint: fc.boolean(),
+          idempotentHint: fc.boolean(),
+          openWorldHint: fc.boolean(),
+        },
+        { requiredKeys: [] },
+      )
+      .chain((known) =>
+        jsonRecordArb.map((extra) => withExtras(known, extra, annotationKeys)),
+      );
+    const iconKeys = ["src", "mimeType", "sizes", "theme"];
+    const iconArb = fc
+      .record(
+        {
+          src: fc.string(),
+          mimeType: fc.string(),
+          sizes: fc.array(fc.string()),
+          theme: fc.constantFrom("dark", "light"),
+        },
+        { requiredKeys: ["src"] },
+      )
+      .chain((known) =>
+        jsonRecordArb.map((extra) => withExtras(known, extra, iconKeys)),
+      );
     fc.assert(
       fc.property(
         fc.string(),
@@ -344,8 +393,9 @@ describe("V1 Zod wire schemas", () => {
           nil: undefined,
         }),
         jsonRecordArb,
-        fc.array(jsonRecordArb),
-        (name, taskSupport, metadata, icons) => {
+        annotationsArb,
+        fc.array(iconArb),
+        (name, taskSupport, metadata, annotations, icons) => {
           expectRoundTrip(ToolV1Schema, {
             name,
             title: "title",
@@ -355,13 +405,34 @@ describe("V1 Zod wire schemas", () => {
             execution: {
               ...(taskSupport === undefined ? {} : { taskSupport }),
             },
-            annotations: metadata,
+            annotations,
             icons,
             _meta: metadata,
           });
         },
       ),
     );
+    // Pinned-schema conformance: annotation hints are booleans (title a
+    // string) and an icon requires a string src with constrained theme.
+    const validTool = { name: "x", inputSchema: { type: "object" } };
+    for (const annotations of [
+      { readOnlyHint: "yes" },
+      { destructiveHint: 1 },
+      { title: 42 },
+    ])
+      expect(
+        ToolV1Schema.safeParse({ ...validTool, annotations }).success,
+      ).toBe(false);
+    for (const icon of [
+      {},
+      { src: 42 },
+      { src: "u", mimeType: 1 },
+      { src: "u", sizes: [48] },
+      { src: "u", theme: "sepia" },
+    ])
+      expect(
+        ToolV1Schema.safeParse({ ...validTool, icons: [icon] }).success,
+      ).toBe(false);
     expect(ToolV1Schema.safeParse({ name: "x", inputSchema: {} }).success).toBe(
       false,
     );

@@ -179,6 +179,29 @@ describe("immediate and session basics", () => {
     await session.close();
   });
 
+  it("rejects invalid maxInputRounds at session construction", async () => {
+    // Unvalidated, the cap fails silently: 1.5 allows two rounds, NaN
+    // disables it, and negatives reject even the first round.
+    for (const maxInputRounds of [
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.MAX_SAFE_INTEGER + 1,
+    ])
+      expect(() =>
+        withTasks(new FakePort({ generation: "none" }), {
+          tools: { currentTool: () => undefined },
+          maxInputRounds,
+        }),
+      ).toThrow("maxInputRounds must be a non-negative safe integer");
+    const session = withTasks(new FakePort({ generation: "none" }), {
+      tools: { currentTool: () => undefined },
+      maxInputRounds: 0,
+    });
+    await session.close();
+  });
+
   it("adds requested TTL only to V1 task calls", async () => {
     const port = new FakePort({
       generation: "v1",

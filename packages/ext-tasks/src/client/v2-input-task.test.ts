@@ -1,0 +1,802 @@
+import fc from "fast-check";
+import { describe, expect, it, vi } from "vitest";
+import { toolDeclaration, withTasks } from "./index.js";
+import {
+  FakePort,
+  asJson,
+  formatJson,
+  asError,
+  expectRecord,
+} from "../../test-support/client/fake-port.js";
+
+describe("V2 input and task behavior", () => {
+  it("drives a V2 task to its inline terminal result", async () => {
+    const port = new FakePort({ generation: "v2", capabilities: {} });
+    const tool = { name: "long", inputSchema: { type: "object" as const } };
+    port.dispatchHandler = async (request) => {
+      await Promise.resolve();
+      const record = expectRecord(request);
+      if (record.method === "tools/call") {
+        return {
+          kind: "result",
+          result: asJson({
+            resultType: "task",
+            taskId: "v2-task",
+            status: "working",
+            createdAt: "a",
+            lastUpdatedAt: "a",
+            ttlMs: null,
+          }),
+        };
+      }
+      if (record.method === "tasks/get") {
+        return {
+          kind: "result",
+          result: asJson({
+            resultType: "complete",
+            taskId: "v2-task",
+            status: "completed",
+            createdAt: "a",
+            lastUpdatedAt: "b",
+            ttlMs: null,
+            result: {
+              resultType: "complete",
+              content: [{ type: "text", text: "done" }],
+            },
+          }),
+        };
+      }
+      if (record.method === "tasks/cancel")
+        return { kind: "result", result: { resultType: "complete" } };
+      throw new Error(`unexpected method ${formatJson(record.method)}`);
+    };
+    const session = withTasks(port, {
+      tools: { currentTool: () => toolDeclaration(tool) },
+    });
+    const execution = await session.callTool("long");
+    expect(execution.kind).toBe("task");
+    expect(execution.handle).toEqual({
+      taskId: "v2-task",
+      operation: "tools/call",
+    });
+    expect(port.requests[0]).toMatchObject({
+      method: "tools/call",
+      params: {
+        _meta: {
+          "io.modelcontextprotocol/clientCapabilities": {
+            extensions: { "io.modelcontextprotocol/tasks": {} },
+          },
+        },
+      },
+    });
+    await expect(legacyResult(execution)).resolves.toEqual({
+      resultType: "complete",
+      content: [{ type: "text", text: "done" }],
+    });
+    await session.close();
+  });
+
+  it("enforces V2 task preferences after classifying the response", async () => {
+    const immediatePort = new FakePort({ generation: "v2", capabilities: {} });
+    immediatePort.response = {
+      kind: "result",
+      result: { resultType: "complete", content: [] },
+    };
+    const immediateSession = withTasks(immediatePort, {
+      tools: { currentTool: () => undefined },
+    });
+    await expect(
+      immediateSession.callTool("required", undefined, {
+        task: { preference: "require" },
+      }),
+    ).rejects.toThrow("server returned an immediate result");
+    await immediateSession.close();
+
+    const taskPort = new FakePort({ generation: "v2", capabilities: {} });
+    taskPort.dispatchHandler = (request) => {
+      const method = expectRecord(request).method;
+      if (method === "tools/call")
+        return Promise.resolve({
+          kind: "result",
+          result: asJson({
+            resultType: "task",
+            taskId: "forbidden-task",
+            status: "working",
+            createdAt: "a",
+            lastUpdatedAt: "a",
+            ttlMs: null,
+          }),
+        });
+      if (method === "tasks/cancel")
+        return Promise.resolve({
+          kind: "result",
+          result: { resultType: "complete" },
+        });
+      throw new Error(`unexpected method ${formatJson(method)}`);
+    };
+    const taskSession = withTasks(taskPort, {
+      tools: { currentTool: () => undefined },
+    });
+    await expect(
+      taskSession.callTool("forbidden", undefined, {
+        task: { preference: "forbid" },
+      }),
+    ).rejects.toThrow("server returned a task");
+    await vi.waitFor(() => {
+      expect(
+        taskPort.requests.some(
+          (request) => expectRecord(request).method === "tasks/cancel",
+        ),
+      ).toBe(true);
+    });
+    const cancelIndex = taskPort.requests.findIndex(
+      (request) => expectRecord(request).method === "tasks/cancel",
+    );
+    // The cleanup cancel carries the mandatory V2 Mcp-Name routing header
+    // because late-task cleanup routes through the task RPC.
+    expect(taskPort.dispatchOptions[cancelIndex]?.context?.headers).toEqual({
+      "Mcp-Name": "forbidden-task",
+    });
+    await taskSession.close();
+  });
+
+  it("bounds advancing V2 task input rounds", async () => {
+    const port = new FakePort({ generation: "v2", capabilities: {} });
+    let getCalls = 0;
+    let handlerCalls = 0;
+    port.dispatchHandler = (request) => {
+      const method = expectRecord(request).method;
+      if (method === "tools/call")
+        return Promise.resolve({
+          kind: "result",
+          result: asJson({
+            resultType: "task",
+            taskId: "bounded-input",
+            status: "working",
+            createdAt: "a",
+            lastUpdatedAt: "a",
+            ttlMs: null,
+            pollIntervalMs: 0,
+          }),
+        });
+      if (method === "tasks/get") {
+        getCalls += 1;
+        return Promise.resolve({
+          kind: "result",
+          result: asJson({
+            resultType: "complete",
+            taskId: "bounded-input",
+            status: "input_required",
+            createdAt: "a",
+            lastUpdatedAt: String(getCalls),
+            ttlMs: null,
+            pollIntervalMs: 0,
+            inputRequests: {
+              [`round-${String(getCalls)}`]: { method: "roots/list" },
+            },
+          }),
+        });
+      }
+      if (method === "tasks/update")
+        return Promise.resolve({
+          kind: "result",
+          result: { resultType: "complete" },
+        });
+      throw new Error(`unexpected method ${formatJson(method)}`);
+    };
+    const session = withTasks(port, {
+      tools: { currentTool: () => undefined },
+      // The cap is opt-in (round-11 finding): the protocol has no input-round
+      // limit, so bounding requires the caller's explicit budget.
+      maxInputRounds: 10,
+      onInputRequest: async () => {
+        await Promise.resolve();
+        handlerCalls += 1;
+        return { roots: [] } as never;
+      },
+    });
+    const execution = await session.callTool("bounded");
+    await expect(execution.result()).resolves.toMatchObject({
+      status: "failed",
+      error: {
+        message: "Task exceeded 10 input-required rounds (maxInputRounds)",
+      },
+    });
+    expect(handlerCalls).toBe(10);
+    expect(getCalls).toBe(11);
+    expect(
+      port.requests.filter(
+        (request) => expectRecord(request).method === "tasks/update",
+      ),
+    ).toHaveLength(10);
+    await session.close();
+  });
+
+  it("acquires distinct V2 input keys once and submits one valid subset", async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.uniqueArray(
+          fc.record({
+            key: fc.stringMatching(/^[a-z][a-z0-9]{0,7}$/),
+            kind: fc.constantFrom("sampling", "roots", "elicitation"),
+          }),
+          { minLength: 1, maxLength: 8, selector: ({ key }) => key },
+        ),
+        async (inputs) => {
+          const port = new FakePort({ generation: "v2", capabilities: {} });
+          const observed: unknown[] = [];
+          let getCalls = 0;
+          port.dispatchHandler = async (request) => {
+            await Promise.resolve();
+            const record = expectRecord(request);
+            if (record.method === "tools/call")
+              return {
+                kind: "result",
+                result: asJson({
+                  resultType: "task",
+                  taskId: "input-task",
+                  status: "working",
+                  createdAt: "a",
+                  lastUpdatedAt: "a",
+                  ttlMs: null,
+                  // Fast hint: hint-less tasks poll at the 1s default.
+                  pollIntervalMs: 1,
+                }),
+              };
+            if (record.method === "tasks/get") {
+              getCalls += 1;
+              if (getCalls === 1)
+                return {
+                  kind: "result",
+                  result: asJson({
+                    resultType: "complete",
+                    taskId: "input-task",
+                    status: "input_required",
+                    createdAt: "a",
+                    lastUpdatedAt: "b",
+                    ttlMs: null,
+                    pollIntervalMs: 1,
+                    inputRequests: Object.fromEntries(
+                      inputs.map(({ key, kind }) => [
+                        key,
+                        kind === "sampling"
+                          ? {
+                              method: "sampling/createMessage",
+                              params: { key, messages: [], maxTokens: 1 },
+                            }
+                          : kind === "roots"
+                            ? { method: "roots/list" }
+                            : {
+                                method: "elicitation/create",
+                                params: {
+                                  key,
+                                  message: "m",
+                                  requestedSchema: { type: "object" },
+                                },
+                              },
+                      ]),
+                    ),
+                  }),
+                };
+              return {
+                kind: "result",
+                result: asJson({
+                  resultType: "complete",
+                  taskId: "input-task",
+                  status: "completed",
+                  createdAt: "a",
+                  lastUpdatedAt: "c",
+                  ttlMs: null,
+                  result: { resultType: "complete", content: [] },
+                }),
+              };
+            }
+            if (record.method === "tasks/update")
+              return { kind: "result", result: { resultType: "complete" } };
+            throw new Error(`unexpected method ${formatJson(record.method)}`);
+          };
+          const session = withTasks<{ marker: string }>(port, {
+            tools: {
+              currentTool: () =>
+                toolDeclaration({
+                  name: "x",
+                  inputSchema: { type: "object" },
+                }),
+            },
+            onInputRequest: async (request, context) => {
+              await Promise.resolve();
+              observed.push({ request, context });
+              return (
+                request.kind === "sampling"
+                  ? {
+                      model: "m",
+                      role: "assistant",
+                      content: { type: "text", text: "sampled" },
+                    }
+                  : request.kind === "roots"
+                    ? { roots: [{ uri: "file:///root" }] }
+                    : { action: "cancel" }
+              ) as never;
+            },
+          });
+          const execution = await session.callTool(
+            "x",
+            {},
+            {
+              applicationContext: { marker: "context" },
+            },
+          );
+          await expect(legacyResult(execution)).resolves.toEqual({
+            resultType: "complete",
+            content: [],
+          });
+          expect(observed).toHaveLength(inputs.length);
+          expect(
+            observed.map((value) => {
+              const entry = expectRecord(asJson(value));
+              return expectRecord(entry.context).inputId;
+            }),
+          ).toEqual(inputs.map(({ key }) => key));
+          for (const value of observed) {
+            const context = expectRecord(expectRecord(asJson(value)).context);
+            expect(context).toMatchObject({
+              scope: "task",
+              delivery: "task-update",
+              taskId: "input-task",
+            });
+          }
+          const updates = port.requests.filter(
+            (request) => expectRecord(request).method === "tasks/update",
+          );
+          expect(updates).toHaveLength(1);
+          expect(updates[0]).toMatchObject({
+            params: {
+              taskId: "input-task",
+              _meta: {
+                "io.modelcontextprotocol/clientCapabilities": {
+                  extensions: { "io.modelcontextprotocol/tasks": {} },
+                },
+              },
+            },
+          });
+          expect(
+            Object.keys(
+              expectRecord(expectRecord(updates[0]).params)
+                .inputResponses as object,
+            ),
+          ).toEqual(inputs.map(({ key }) => key));
+          await session.close();
+        },
+      ),
+      { numRuns: 25 },
+    );
+  });
+
+  it("does not reacquire repeated V2 keys and reports incompatible reuse", async () => {
+    const errors: Error[] = [];
+    const port = new FakePort({ generation: "v2", capabilities: {} });
+    let getCalls = 0;
+    let handlerCalls = 0;
+    port.dispatchHandler = async (request) => {
+      await Promise.resolve();
+      const method = expectRecord(request).method;
+      if (method === "tools/call")
+        return {
+          kind: "result",
+          result: asJson({
+            resultType: "task",
+            taskId: "repeat",
+            status: "working",
+            createdAt: "a",
+            lastUpdatedAt: "a",
+            ttlMs: null,
+            // Fast hint: hint-less tasks poll at the 1s default.
+            pollIntervalMs: 1,
+          }),
+        };
+      if (method === "tasks/get") {
+        getCalls += 1;
+        if (getCalls <= 3)
+          return {
+            kind: "result",
+            result: asJson({
+              resultType: "complete",
+              taskId: "repeat",
+              status: "input_required",
+              createdAt: "a",
+              lastUpdatedAt: String(getCalls),
+              ttlMs: null,
+              pollIntervalMs: 1,
+              inputRequests: {
+                same:
+                  getCalls <= 2
+                    ? { method: "roots/list" }
+                    : {
+                        method: "sampling/createMessage",
+                        params: { messages: [], maxTokens: 1 },
+                      },
+              },
+            }),
+          };
+        return {
+          kind: "result",
+          result: asJson({
+            resultType: "complete",
+            taskId: "repeat",
+            status: "completed",
+            createdAt: "a",
+            lastUpdatedAt: "z",
+            ttlMs: null,
+            result: { resultType: "complete", content: [] },
+          }),
+        };
+      }
+      throw new Error(`unexpected method ${formatJson(method)}`);
+    };
+    const session = withTasks(port, {
+      tools: {
+        currentTool: () =>
+          toolDeclaration({ name: "x", inputSchema: { type: "object" } }),
+      },
+      onInputRequest: async () => {
+        await Promise.resolve();
+        handlerCalls += 1;
+        throw new Error("declined");
+      },
+      onError: (error) => errors.push(error),
+    });
+    const execution = await session.callTool("x");
+    await expect(legacyResult(execution)).resolves.toMatchObject({
+      resultType: "complete",
+    });
+    expect(handlerCalls).toBe(3);
+    expect(
+      errors.some((error) => error.message.includes("reused incompatibly")),
+    ).toBe(false);
+    expect(errors.some((error) => error.message === "declined")).toBe(true);
+    expect(
+      port.requests.filter(
+        (request) => expectRecord(request).method === "tasks/update",
+      ),
+    ).toEqual([]);
+    await session.close();
+  });
+
+  it("fails the execution when a committed V2 input key is reused incompatibly", async () => {
+    const port = new FakePort({ generation: "v2", capabilities: {} });
+    let getCalls = 0;
+    port.dispatchHandler = async (request) => {
+      await Promise.resolve();
+      const method = expectRecord(request).method;
+      if (method === "tools/call")
+        return {
+          kind: "result",
+          result: asJson({
+            resultType: "task",
+            taskId: "reuse-incompatible",
+            status: "working",
+            createdAt: "a",
+            lastUpdatedAt: "a",
+            ttlMs: null,
+          }),
+        };
+      if (method === "tasks/get") {
+        getCalls += 1;
+        return {
+          kind: "result",
+          result: asJson({
+            resultType: "complete",
+            taskId: "reuse-incompatible",
+            status: "input_required",
+            createdAt: "a",
+            lastUpdatedAt: String(getCalls),
+            ttlMs: null,
+            inputRequests: {
+              same:
+                getCalls === 1
+                  ? { method: "roots/list" }
+                  : {
+                      method: "elicitation/create",
+                      params: {
+                        message: "m",
+                        requestedSchema: { type: "object" },
+                      },
+                    },
+            },
+          }),
+        };
+      }
+      if (method === "tasks/update")
+        return { kind: "result", result: { resultType: "complete" } };
+      throw new Error(`unexpected method ${formatJson(method)}`);
+    };
+    const session = withTasks(port, {
+      tools: {
+        currentTool: () =>
+          toolDeclaration({ name: "x", inputSchema: { type: "object" } }),
+      },
+      onInputRequest: async (request) => {
+        await Promise.resolve();
+        // `as never`, because the generic signature cannot relate a runtime
+        // kind branch to TRequest (the suite-wide fake-handler pattern).
+        return (
+          request.kind === "roots"
+            ? { roots: [{ uri: "file:///workspace" }] }
+            : { action: "cancel" }
+        ) as never;
+      },
+    });
+    const execution = await session.callTool("x");
+    // Key "same" returns with a different request shape — a protocol
+    // violation that must fail the execution, not keep it polling.
+    await expect(legacyResult(execution)).rejects.toThrow(
+      "reused incompatibly",
+    );
+    await session.close();
+  });
+
+  it("declines keyed V2 elicitation while withholding sampling and roots", async () => {
+    const port = new FakePort({ generation: "v2", capabilities: {} });
+    let getCalls = 0;
+    port.dispatchHandler = async (request) => {
+      await Promise.resolve();
+      const method = expectRecord(request).method;
+      if (method === "tools/call")
+        return {
+          kind: "result",
+          result: asJson({
+            resultType: "task",
+            taskId: "decline-input",
+            status: "working",
+            createdAt: "a",
+            lastUpdatedAt: "a",
+            ttlMs: null,
+          }),
+        };
+      if (method === "tasks/get") {
+        getCalls += 1;
+        return {
+          kind: "result",
+          result: asJson(
+            getCalls === 1
+              ? {
+                  resultType: "complete",
+                  taskId: "decline-input",
+                  status: "input_required",
+                  createdAt: "a",
+                  lastUpdatedAt: "b",
+                  ttlMs: null,
+                  inputRequests: {
+                    elicit: {
+                      method: "elicitation/create",
+                      params: {
+                        message: "m",
+                        requestedSchema: { type: "object" },
+                      },
+                    },
+                    sample: {
+                      method: "sampling/createMessage",
+                      params: { messages: [], maxTokens: 1 },
+                    },
+                    roots: { method: "roots/list" },
+                  },
+                }
+              : {
+                  resultType: "complete",
+                  taskId: "decline-input",
+                  status: "completed",
+                  createdAt: "a",
+                  lastUpdatedAt: "c",
+                  ttlMs: null,
+                  result: { resultType: "complete", content: [] },
+                },
+          ),
+        };
+      }
+      if (method === "tasks/update")
+        return { kind: "result", result: { resultType: "complete" } };
+      throw new Error(`unexpected method ${formatJson(method)}`);
+    };
+    const errors: Error[] = [];
+    const session = withTasks(port, {
+      tools: {
+        currentTool: () =>
+          toolDeclaration({ name: "x", inputSchema: { type: "object" } }),
+      },
+      onInputRequest: async () => {
+        await Promise.resolve();
+        throw new Error("declined");
+      },
+      onError: (error) => errors.push(error),
+    });
+    const execution = await session.callTool("x");
+    await expect(legacyResult(execution)).resolves.toMatchObject({
+      resultType: "complete",
+    });
+    const updates = port.requests.filter(
+      (request) => expectRecord(request).method === "tasks/update",
+    );
+    expect(updates).toHaveLength(1);
+    expect(
+      expectRecord(expectRecord(updates[0]).params).inputResponses,
+    ).toEqual({
+      elicit: { action: "cancel" },
+    });
+    expect(errors).toHaveLength(3);
+    expect(errors.every((error) => error.message === "declined")).toBe(true);
+    await session.close();
+  });
+
+  it("aborts V2 input handling when a terminal notification arrives", async () => {
+    const port = new FakePort({ generation: "v2", capabilities: {} });
+    let getCalls = 0;
+    let handlerSignal: AbortSignal | undefined;
+    port.dispatchHandler = async (request) => {
+      await Promise.resolve();
+      const method = expectRecord(request).method;
+      if (method === "tools/call")
+        return {
+          kind: "result",
+          result: asJson({
+            resultType: "task",
+            taskId: "terminal-input",
+            status: "working",
+            createdAt: "a",
+            lastUpdatedAt: "a",
+            ttlMs: null,
+          }),
+        };
+      if (method === "tasks/get") {
+        getCalls += 1;
+        return {
+          kind: "result",
+          result: asJson({
+            resultType: "complete",
+            taskId: "terminal-input",
+            status: "input_required",
+            createdAt: "a",
+            lastUpdatedAt: "b",
+            ttlMs: null,
+            inputRequests: {
+              key: {
+                method: "elicitation/create",
+                params: { message: "m", requestedSchema: { type: "object" } },
+              },
+            },
+          }),
+        };
+      }
+      throw new Error(`unexpected method ${formatJson(method)}`);
+    };
+    const session = withTasks(port, {
+      tools: {
+        currentTool: () =>
+          toolDeclaration({ name: "x", inputSchema: { type: "object" } }),
+      },
+      onInputRequest: (_request, context) => {
+        handlerSignal = context.signal;
+        return new Promise<never>((_resolve, reject) =>
+          context.signal?.addEventListener(
+            "abort",
+            () => {
+              reject(asError(context.signal?.reason));
+            },
+            { once: true },
+          ),
+        );
+      },
+    });
+    const execution = await session.callTool("x");
+    while (handlerSignal === undefined)
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    port.notify(
+      asJson({
+        jsonrpc: "2.0",
+        method: "notifications/tasks",
+        params: {
+          resultType: "complete",
+          taskId: "terminal-input",
+          status: "completed",
+          createdAt: "a",
+          lastUpdatedAt: "c",
+          ttlMs: null,
+          result: { resultType: "complete", content: [] },
+        },
+      }),
+    );
+    await expect(legacyResult(execution)).resolves.toEqual({
+      resultType: "complete",
+      content: [],
+    });
+    expect(handlerSignal.aborted).toBe(true);
+    expect(getCalls).toBe(1);
+    expect(
+      port.requests.some(
+        (request) => expectRecord(request).method === "tasks/update",
+      ),
+    ).toBe(false);
+    await session.close();
+  });
+
+  it("fetches V2 details when task creation is already terminal", async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.constantFrom("completed", "failed", "cancelled"),
+        async (status) => {
+          const port = new FakePort({ generation: "v2", capabilities: {} });
+          let getCalls = 0;
+          port.dispatchHandler = async (request) => {
+            await Promise.resolve();
+            const record = expectRecord(request);
+            if (record.method === "tools/call")
+              return {
+                kind: "result",
+                result: asJson({
+                  resultType: "task",
+                  taskId: "terminal-at-creation",
+                  status,
+                  createdAt: "a",
+                  lastUpdatedAt: "a",
+                  ttlMs: null,
+                }),
+              };
+            if (record.method === "tasks/get") {
+              getCalls += 1;
+              const terminal = {
+                resultType: "complete",
+                taskId: "terminal-at-creation",
+                status,
+                createdAt: "a",
+                lastUpdatedAt: "b",
+                ttlMs: null,
+              };
+              return {
+                kind: "result",
+                result: asJson(
+                  status === "completed"
+                    ? {
+                        ...terminal,
+                        result: { resultType: "complete", content: [] },
+                      }
+                    : status === "failed"
+                      ? {
+                          ...terminal,
+                          error: { code: -32000, message: "task failed" },
+                        }
+                      : terminal,
+                ),
+              };
+            }
+            throw new Error(`unexpected method ${formatJson(record.method)}`);
+          };
+          const session = withTasks(port, {
+            tools: {
+              currentTool: () =>
+                toolDeclaration({
+                  name: "x",
+                  inputSchema: { type: "object" },
+                }),
+            },
+          });
+          const execution = await session.callTool("x");
+          if (status === "completed")
+            await expect(legacyResult(execution)).resolves.toEqual({
+              resultType: "complete",
+              content: [],
+            });
+          else if (status === "failed")
+            await expect(legacyResult(execution)).rejects.toMatchObject({
+              name: "JsonRpcResponseError",
+              code: -32000,
+              message: "task failed",
+            });
+          else await expect(legacyResult(execution)).rejects.toThrow(/cancel/i);
+          expect(getCalls).toBe(1);
+          await session.close();
+        },
+      ),
+      { numRuns: 9 },
+    );
+  });
+});
+import { legacyResult } from "../../test-support/client/semantic.js";

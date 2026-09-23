@@ -1,0 +1,170 @@
+import type { JsonValue } from "../core/index.js";
+import { ToolV1Schema } from "../core/v1/index.js";
+import { ToolV2Schema } from "../core/v2/index.js";
+import {
+  JsonRpcResponseError,
+  type ToolDeclaration,
+  type ToolDeclarationProvider,
+} from "./api.js";
+import { projectTool } from "./internal.js";
+import type { ConnectedMcpSessionPort } from "./port.js";
+import { throwIfAborted } from "./input-routing.js";
+
+export class ManagedToolDeclarations implements ToolDeclarationProvider {
+  private tools = new Map<string, ToolDeclaration>();
+  private refreshSequence = 0;
+  private refreshController: AbortController | undefined;
+  private initialReady: Promise<void>;
+  private closed = false;
+
+  constructor(
+    private readonly port: ConnectedMcpSessionPort,
+    private readonly reportError: (error: Error) => void,
+  ) {
+    this.initialReady = this.refresh();
+    void this.initialReady.catch(() => {});
+  }
+
+  currentTool(name: string): ToolDeclaration | undefined {
+    return this.tools.get(name);
+  }
+
+  async ensureReady(signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
+    const wait = async (): Promise<void> => {
+      let retried = false;
+      for (;;) {
+        const pending = this.initialReady;
+        try {
+          await pending;
+          return;
+        } catch (error) {
+          if (this.closed) throw error;
+          // Follow the replacement rather than failing permanently because a
+          // newer refresh superseded this one (early tools/list_changed).
+          if (this.initialReady !== pending) continue;
+          if (retried) throw error;
+          retried = true;
+          this.initialReady = this.refresh();
+          void this.initialReady.catch(() => {});
+        }
+      }
+    };
+    const waiting = wait();
+    if (signal === undefined) return waiting;
+    let onAbort: (() => void) | undefined;
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => {
+        reject(
+          signal.reason instanceof Error
+            ? signal.reason
+            : new DOMException("The operation was aborted", "AbortError"),
+        );
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      await Promise.race([waiting, aborted]);
+    } finally {
+      if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
+    }
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.refreshController?.abort();
+  }
+
+  onNotification(notification: JsonValue): void {
+    if (this.closed) return;
+    if (
+      notification === null ||
+      Array.isArray(notification) ||
+      typeof notification !== "object"
+    )
+      return;
+    const record = notification as Readonly<Record<string, JsonValue>>;
+    if (record.method !== "notifications/tools/list_changed") return;
+    const refreshed = this.refresh();
+    // Point readiness at the newest refresh because a superseded initial
+    // refresh's abort would otherwise leave ensureReady() permanently rejected.
+    this.initialReady = refreshed;
+    void refreshed.catch((error: unknown) => {
+      if (!(error instanceof DOMException && error.name === "AbortError")) {
+        this.reportError(
+          error instanceof Error
+            ? error
+            : new Error("Tool refresh failed", { cause: error }),
+        );
+      }
+    });
+  }
+
+  private async refresh(): Promise<void> {
+    if (this.closed)
+      throw new DOMException("Tool declarations are closed", "AbortError");
+    const sequence = ++this.refreshSequence;
+    this.refreshController?.abort();
+    const controller = new AbortController();
+    this.refreshController = controller;
+    const decoded = new Map<string, ToolDeclaration>();
+    // Malformed pagination must fail deterministically: a non-string
+    // nextCursor treated as end-of-list would silently truncate discovery,
+    // and a repeated cursor would issue tools/list forever.
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const response = await this.port.dispatch(
+        {
+          method: "tools/list",
+          params: cursor === undefined ? {} : { cursor },
+        },
+        { signal: controller.signal },
+      );
+      if (response.kind === "error")
+        throw new JsonRpcResponseError(response.error);
+      if (
+        response.result === null ||
+        Array.isArray(response.result) ||
+        typeof response.result !== "object"
+      ) {
+        throw new Error("tools/list result must be an object");
+      }
+      const result = response.result as Readonly<Record<string, JsonValue>>;
+      const listed = result.tools;
+      if (!Array.isArray(listed))
+        throw new Error("tools/list result must contain tools");
+      const generation = this.port.taskCapabilities.generation;
+      for (const value of listed) {
+        let declaration: ToolDeclaration;
+        if (generation === "v1") {
+          const parsed = ToolV1Schema.safeParse(value);
+          if (!parsed.success) throw parsed.error;
+          declaration = projectTool(parsed.data);
+        } else {
+          const parsed = ToolV2Schema.safeParse(value);
+          if (!parsed.success) throw parsed.error;
+          declaration = projectTool(parsed.data);
+        }
+        if (decoded.has(declaration.name))
+          throw new Error(`Duplicate tool declaration: ${declaration.name}`);
+        decoded.set(declaration.name, declaration);
+      }
+      const nextCursor = Object.hasOwn(result, "nextCursor")
+        ? result.nextCursor
+        : undefined;
+      if (nextCursor !== undefined && typeof nextCursor !== "string")
+        throw new Error("tools/list nextCursor must be a string");
+      if (nextCursor !== undefined) {
+        if (seenCursors.has(nextCursor))
+          throw new Error(
+            `tools/list repeated pagination cursor: ${nextCursor}`,
+          );
+        seenCursors.add(nextCursor);
+      }
+      cursor = nextCursor;
+    } while (cursor !== undefined);
+    if (sequence === this.refreshSequence) this.tools = decoded;
+  }
+}
